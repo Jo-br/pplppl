@@ -1120,6 +1120,44 @@ label {
   text-align: right;
 }
 
+/* ---- Consistency Heatmap ---- */
+
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  margin-bottom: 12px;
+}
+
+.heatmap-day {
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--accent-light);
+  border-radius: 3px;
+  transition: all 0.15s ease;
+}
+
+.heatmap-day.has-workout {
+  background: var(--green);
+}
+
+.heatmap-day.future {
+  opacity: 0.3;
+}
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+
+.heatmap-legend .heatmap-day {
+  width: 12px;
+  height: 12px;
+  aspect-ratio: unset;
+}
+
 /* ---- Milestones ---- */
 
 .milestones-grid {

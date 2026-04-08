@@ -33,6 +33,36 @@ const EXERCISE_MAP = {
   'bröstmaskin': 'Pec Deck',
 };
 
+// ---- Exercise Substitutions ----
+
+const EXERCISE_SUBSTITUTIONS = {
+  'Bench Press': ['DB Bench', 'Incline Press', 'Push-ups'],
+  'DB Bench': ['Bench Press', 'Incline Press'],
+  'Incline Press': ['Bench Press', 'DB Bench'],
+  'Overhead Press': ['DB Shoulder Press', 'Arnold Press', 'Push Press'],
+  'Squat': ['Leg Press', 'Front Squat', 'Bulgarian Split Squat'],
+  'Deadlift': ['Romanian Deadlift', 'Trap Bar Deadlift', 'Rack Pulls'],
+  'Barbell Row': ['DB Row', 'Cable Row', 'T-Bar Row', 'Pendlay Row'],
+  'Lat Pulldown': ['Pull-ups', 'Chin-ups', 'Cable Pulldown'],
+  'Leg Press': ['Squat', 'Hack Squat', 'Bulgarian Split Squat'],
+  'Leg Curl': ['Romanian Deadlift', 'Nordic Curls', 'Swiss Ball Curl'],
+  'Leg Extension': ['Squat', 'Lunges', 'Step-ups'],
+  'Barbell Curl': ['DB Curl', 'Cable Curl', 'EZ Bar Curl'],
+  'Hammer Curl': ['DB Curl', 'Cable Hammer Curl', 'Rope Curl'],
+  'Tricep Pushdown': ['Overhead Tricep Extension', 'Dips', 'Close-Grip Bench'],
+  'Close-Grip Bench': ['Tricep Pushdown', 'Dips', 'Diamond Push-ups'],
+  'Lateral Raise': ['Cable Lateral Raise', 'Upright Row', 'DB Shoulder Press'],
+  'Face Pull': ['Reverse Fly', 'Band Pull Apart', 'Cable Row'],
+  'Romanian Deadlift': ['Deadlift', 'Good Mornings', 'Stiff-Leg Deadlift'],
+  'Hip Thrust': ['Glute Bridge', 'Bulgarian Split Squat', 'Deadlift'],
+  'Bulgarian Split Squat': ['Lunges', 'Step-ups', 'Squat'],
+  'Cable Row': ['Barbell Row', 'DB Row', 'T-Bar Row'],
+  'DB Row': ['Barbell Row', 'Cable Row', 'T-Bar Row'],
+  'Pec Deck': ['Cable Fly', 'DB Fly', 'Bench Press'],
+  'Standing Calf Raise': ['Seated Calf Raise', 'Leg Press Calf Raise'],
+  'Seated Calf Raise': ['Standing Calf Raise', 'Leg Press Calf Raise'],
+};
+
 // ---- Workout Templates ----
 
 const WORKOUTS = {
@@ -159,7 +189,8 @@ function getDefaultData() {
       darkMode: false,
     },
     prs: {}, // { exerciseName: { weight: { value, date, sessionId }, reps: { value, weight, date, sessionId }, e1rm: { value, date, sessionId } } }
-    exerciseNotes: {} // { exerciseName: "notes text" }
+    exerciseNotes: {}, // { exerciseName: "notes text" }
+    customWorkouts: {} // { workoutName: { type: 'Strength'|'Hypertrophy', exercises: [...] } }
   };
 }
 
@@ -1256,9 +1287,24 @@ function renderRecommendations(sessionId) {
 function renderProgress() {
   let html = `<div class="animate-in">
     <h2>Progress</h2>
+
+    <!-- Workout Consistency Heatmap -->
+    <div class="card mb-16 animate-in">
+      <div class="card-title mb-8">Workout Consistency</div>
+      <div id="consistency-heatmap"></div>
+    </div>
+
+    <!-- Weekly Volume Chart -->
+    <div class="card mb-16 animate-in">
+      <div class="card-title">Weekly Volume</div>
+      <div class="chart-container"><canvas id="weekly-volume-chart"></canvas></div>
+    </div>
+
+    <h3 class="mt-24 mb-12">Exercise Progress</h3>
     <div class="pill-group" id="progress-toggle">
       <button class="pill active" onclick="setProgressMode('1rm')">Est. 1RM</button>
-      <button class="pill" onclick="setProgressMode('weight')">Working Weight</button>
+      <button class="pill" onclick="setProgressMode('weight')">Weight</button>
+      <button class="pill" onclick="setProgressMode('volume')">Volume</button>
     </div>
     <div class="pill-group" id="progress-range">
       <button class="pill" onclick="setProgressRange(30)">30d</button>
@@ -1283,7 +1329,7 @@ window._progressRange = 0;
 window.setProgressMode = function(mode) {
   window._progressMode = mode;
   document.querySelectorAll('#progress-toggle .pill').forEach((p, i) => {
-    p.classList.toggle('active', (i === 0 && mode === '1rm') || (i === 1 && mode === 'weight'));
+    p.classList.toggle('active', (i === 0 && mode === '1rm') || (i === 1 && mode === 'weight') || (i === 2 && mode === 'volume'));
   });
   initProgressCharts();
 };
@@ -1298,6 +1344,13 @@ window.setProgressRange = function(days) {
 
 function initProgressCharts() {
   loadChartJs().then(() => {
+    // Consistency Heatmap
+    renderConsistencyHeatmap();
+
+    // Weekly Volume Chart
+    renderWeeklyVolumeChart();
+
+    // Exercise Progress Charts
     for (const lift of KEY_LIFTS) {
       const canvasId = `chart-${lift.replace(/\s/g, '')}`;
       const canvas = document.getElementById(canvasId);
@@ -1314,9 +1367,14 @@ function initProgressCharts() {
           (s.w > best.w || (s.w === best.w && s.r > best.r)) ? s : best
         , ex.workingSets[0]);
 
-        const value = window._progressMode === '1rm'
-          ? Math.round(epley1RM(bestSet.w, bestSet.r) * 10) / 10
-          : bestSet.w;
+        let value;
+        if (window._progressMode === '1rm') {
+          value = Math.round(epley1RM(bestSet.w, bestSet.r) * 10) / 10;
+        } else if (window._progressMode === 'volume') {
+          value = Math.round(ex.workingSets.reduce((sum, s) => sum + s.w * s.r, 0));
+        } else {
+          value = bestSet.w;
+        }
 
         dataPoints.push({ date: session.date, value, label: formatDate(session.date) });
       }
@@ -1355,16 +1413,123 @@ function initProgressCharts() {
             legend: { display: false },
             tooltip: {
               callbacks: {
-                label: ctx => `${ctx.parsed.y} kg${window._progressMode === '1rm' ? ' (est. 1RM)' : ''}`
+                label: ctx => window._progressMode === 'volume'
+                  ? `${ctx.parsed.y.toLocaleString()} kg`
+                  : `${ctx.parsed.y} kg${window._progressMode === '1rm' ? ' (est. 1RM)' : ''}`
               }
             }
           },
           scales: {
             x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0 } },
-            y: { grid: { color: '#e5e2dc' }, ticks: { font: { size: 11 }, callback: v => v + 'kg' } }
+            y: {
+              grid: { color: '#e5e2dc' },
+              ticks: {
+                font: { size: 11 },
+                callback: v => window._progressMode === 'volume' ? v.toLocaleString() + 'kg' : v + 'kg'
+              }
+            }
           }
         }
       });
+    }
+  });
+}
+
+function renderConsistencyHeatmap() {
+  const container = document.getElementById('consistency-heatmap');
+  if (!container) return;
+
+  // Get last 12 weeks
+  const weeks = [];
+  const today = new Date();
+  for (let i = 11; i >= 0; i--) {
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - (i * 7));
+    weeks.push(weekStart);
+  }
+
+  let html = '<div class="heatmap-grid">';
+
+  for (const weekStart of weeks) {
+    for (let day = 0; day < 7; day++) {
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + day);
+      const dateStr = date.toISOString().slice(0, 10);
+
+      const hasWorkout = APP_DATA.sessions.some(s => s.date === dateStr);
+      const isFuture = date > today;
+
+      html += `<div class="heatmap-day ${hasWorkout ? 'has-workout' : ''} ${isFuture ? 'future' : ''}" title="${dateStr}"></div>`;
+    }
+  }
+
+  html += '</div>';
+  html += '<div class="heatmap-legend"><span class="text-xs text-secondary">Less</span><div class="heatmap-day"></div><div class="heatmap-day has-workout"></div><span class="text-xs text-secondary">More</span></div>';
+
+  container.innerHTML = html;
+}
+
+function renderWeeklyVolumeChart() {
+  const canvas = document.getElementById('weekly-volume-chart');
+  if (!canvas) return;
+
+  destroyChart('weekly-volume');
+
+  // Group sessions by week
+  const weeklyData = {};
+  for (const session of APP_DATA.sessions) {
+    const date = new Date(session.date + 'T00:00:00');
+    const weekStart = new Date(date);
+    const day = weekStart.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    weekStart.setDate(weekStart.getDate() - diff);
+    const weekKey = weekStart.toISOString().slice(0, 10);
+
+    if (!weeklyData[weekKey]) {
+      weeklyData[weekKey] = 0;
+    }
+
+    const volume = session.exercises.reduce((sum, ex) =>
+      sum + ex.workingSets.reduce((exSum, s) => exSum + s.w * s.r, 0), 0);
+
+    weeklyData[weekKey] += volume;
+  }
+
+  const weeks = Object.keys(weeklyData).sort();
+  const volumes = weeks.map(w => Math.round(weeklyData[w]));
+
+  chartInstances['weekly-volume'] = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: weeks.map(w => formatDate(w)),
+      datasets: [{
+        data: volumes,
+        backgroundColor: 'rgba(26,26,26,0.7)',
+        borderColor: '#1a1a1a',
+        borderWidth: 1,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.parsed.y.toLocaleString()} kg`
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0 } },
+        y: {
+          grid: { color: '#e5e2dc' },
+          ticks: {
+            font: { size: 11 },
+            callback: v => (v / 1000).toFixed(0) + 'k'
+          }
+        }
+      }
     }
   });
 }
@@ -1751,7 +1916,30 @@ function renderSettings() {
     </div>
 
     <div class="settings-section">
-      <h3>Workout Templates</h3>
+      <h3>Custom Workouts</h3>
+      <p class="text-sm text-secondary mb-12">Your custom workout templates</p>`;
+
+    if (APP_DATA.customWorkouts && Object.keys(APP_DATA.customWorkouts).length > 0) {
+      for (const [name, workout] of Object.entries(APP_DATA.customWorkouts)) {
+        html += `<div class="card mb-12">
+          <div class="card-header">
+            <span class="card-title">${name} ⭐</span>
+            <button class="btn btn-sm btn-secondary" onclick="editCustomWorkout('${name}')">Edit</button>
+          </div>
+          <div class="text-sm text-secondary">
+            ${workout.exercises.map(e => `${e.name} ${e.sets}×${e.reps}`).join(' · ')}
+          </div>
+        </div>`;
+      }
+    } else {
+      html += `<p class="text-sm text-secondary">No custom workouts yet</p>`;
+    }
+
+    html += `<button class="btn btn-primary btn-block mt-12" onclick="createCustomWorkout()">+ Create Custom Workout</button>
+    </div>
+
+    <div class="settings-section">
+      <h3>Preset Templates</h3>
       <p class="text-sm text-secondary mb-12">Pre-configured PPLPPL program</p>`;
 
     for (const [name, workout] of Object.entries(WORKOUTS)) {
@@ -1884,8 +2072,12 @@ function renderWorkoutSelect() {
     <h2>Start Workout</h2>
     <p class="text-sm text-secondary mb-16">Select your workout type</p>`;
 
-  for (const [name, workout] of Object.entries(WORKOUTS)) {
+  // Get all workouts (preset + custom)
+  const allWorkouts = { ...WORKOUTS, ...(APP_DATA.customWorkouts || {}) };
+
+  for (const [name, workout] of Object.entries(allWorkouts)) {
     const badgeClass = workout.type === 'Strength' ? 'badge-strength' : 'badge-hypertrophy';
+    const isCustom = !WORKOUTS[name];
 
     // Find last session of this type
     const lastSession = [...APP_DATA.sessions]
@@ -1896,7 +2088,7 @@ function renderWorkoutSelect() {
 
     html += `<div class="card session-card mb-12 animate-in">
       <div class="card-header">
-        <span class="card-title">${name}</span>
+        <span class="card-title">${name}${isCustom ? ' ⭐' : ''}</span>
         <span class="card-badge ${badgeClass}">${workout.type}</span>
       </div>
       <div class="text-sm text-secondary mb-8">
@@ -1914,13 +2106,14 @@ function renderWorkoutSelect() {
     </div>`;
   }
 
-  html += `<button class="btn btn-secondary btn-block mt-16" onclick="navigate('dashboard')">Cancel</button>
+  html += `<button class="btn btn-primary btn-block mt-12" onclick="createCustomWorkout()">+ Create Custom Workout</button>`;
+  html += `<button class="btn btn-secondary btn-block mt-12" onclick="navigate('dashboard')">Cancel</button>
   </div>`;
   return html;
 }
 
 window.startLiveWorkout = function(workoutType, repeatLast = false) {
-  const template = WORKOUTS[workoutType];
+  const template = WORKOUTS[workoutType] || (APP_DATA.customWorkouts && APP_DATA.customWorkouts[workoutType]);
   if (!template) return;
 
   // Get last session for pre-filling
@@ -1988,7 +2181,10 @@ function renderWorkoutLive() {
     <div class="card mb-16">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <h3 class="mb-0">${ex.name}</h3>
-        <button class="btn btn-sm btn-secondary" onclick="openExerciseNotes('${ex.name}')" style="padding:4px 12px;min-height:28px;font-size:0.75rem">Notes</button>
+        <div style="display:flex;gap:6px">
+          ${EXERCISE_SUBSTITUTIONS[ex.name] ? `<button class="btn btn-sm btn-secondary" onclick="substituteExercise()" style="padding:4px 12px;min-height:28px;font-size:0.75rem">Substitute</button>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="openExerciseNotes('${ex.name}')" style="padding:4px 12px;min-height:28px;font-size:0.75rem">Notes</button>
+        </div>
       </div>
       <div class="text-sm text-secondary mb-12">Target: ${ex.targetSets} sets × ${ex.targetReps} reps · Rest: ${ex.restTime}s</div>
       <div class="text-sm mb-12">Completed: ${setProgress} sets</div>
@@ -2363,6 +2559,45 @@ window.cancelWorkout = function() {
   navigate('dashboard');
 };
 
+window.substituteExercise = function() {
+  if (!liveWorkout) return;
+
+  const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
+  const substitutes = EXERCISE_SUBSTITUTIONS[ex.name];
+
+  if (!substitutes || substitutes.length === 0) {
+    showToast('No substitutions available');
+    return;
+  }
+
+  let html = `
+    <h3 class="mb-12">Substitute Exercise</h3>
+    <p class="text-sm text-secondary mb-12">Current: ${ex.name}</p>
+    <p class="text-sm mb-12">Select alternative:</p>
+    <div style="display:flex;flex-direction:column;gap:8px">`;
+
+  for (const sub of substitutes) {
+    html += `<button class="btn btn-secondary btn-block" onclick="applySubstitution('${sub}')">${sub}</button>`;
+  }
+
+  html += `</div>
+    <button class="btn btn-secondary btn-block mt-16" onclick="closeModal()">Cancel</button>
+  `;
+
+  openModal(html);
+};
+
+window.applySubstitution = function(newExerciseName) {
+  if (!liveWorkout) return;
+
+  const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
+  ex.name = newExerciseName;
+
+  closeModal();
+  renderPage();
+  showToast(`Switched to ${newExerciseName}`);
+};
+
 window.openExerciseNotes = function(exerciseName) {
   if (!APP_DATA.exerciseNotes) APP_DATA.exerciseNotes = {};
   const currentNote = APP_DATA.exerciseNotes[exerciseName] || '';
@@ -2404,6 +2639,163 @@ window.deleteExerciseNote = function(exerciseName) {
   }
   saveData(APP_DATA);
   showToast('Note deleted');
+  closeModal();
+  renderPage();
+};
+
+// ---- Custom Workouts ----
+
+window.createCustomWorkout = function() {
+  const html = `
+    <h3 class="mb-12">Create Custom Workout</h3>
+    <div class="mb-12">
+      <label>Workout Name</label>
+      <input type="text" id="custom-workout-name" placeholder="e.g., Upper Body A">
+    </div>
+    <div class="mb-12">
+      <label>Type</label>
+      <select id="custom-workout-type">
+        <option value="Strength">Strength</option>
+        <option value="Hypertrophy">Hypertrophy</option>
+      </select>
+    </div>
+    <div class="mb-12">
+      <label>Exercises (one per line: "Exercise: sets×reps, rest")</label>
+      <textarea id="custom-workout-exercises" placeholder="Bench Press: 4×4-6, 180
+Overhead Press: 3×5-7, 150" style="min-height:200px"></textarea>
+      <div class="text-xs text-secondary mt-4">Format: Exercise Name: sets×reps, rest(seconds)</div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="saveCustomWorkout()">Create</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `;
+  openModal(html);
+};
+
+window.saveCustomWorkout = function() {
+  if (!APP_DATA.customWorkouts) APP_DATA.customWorkouts = {};
+
+  const name = document.getElementById('custom-workout-name').value.trim();
+  const type = document.getElementById('custom-workout-type').value;
+  const exercisesText = document.getElementById('custom-workout-exercises').value.trim();
+
+  if (!name) {
+    showToast('Enter workout name');
+    return;
+  }
+
+  if (!exercisesText) {
+    showToast('Add exercises');
+    return;
+  }
+
+  // Parse exercises
+  const exercises = [];
+  const lines = exercisesText.split('\n').filter(l => l.trim());
+
+  for (const line of lines) {
+    const match = line.match(/^(.+?):\s*(\d+)\s*[×x]\s*(.+?),\s*(\d+)/i);
+    if (!match) {
+      showToast(`Invalid format in line: ${line}`);
+      return;
+    }
+
+    exercises.push({
+      name: match[1].trim(),
+      sets: parseInt(match[2]),
+      reps: match[3].trim(),
+      rest: parseInt(match[4])
+    });
+  }
+
+  APP_DATA.customWorkouts[name] = {
+    type,
+    exercises
+  };
+
+  saveData(APP_DATA);
+  showToast('Custom workout created!');
+  closeModal();
+  navigate('workout-select');
+};
+
+window.editCustomWorkout = function(name) {
+  const workout = APP_DATA.customWorkouts[name];
+  if (!workout) return;
+
+  const exercisesText = workout.exercises.map(e => `${e.name}: ${e.sets}×${e.reps}, ${e.rest}`).join('\n');
+
+  const html = `
+    <h3 class="mb-12">Edit Custom Workout</h3>
+    <div class="mb-12">
+      <label>Workout Name</label>
+      <input type="text" id="edit-workout-name" value="${name}" disabled>
+    </div>
+    <div class="mb-12">
+      <label>Type</label>
+      <select id="edit-workout-type">
+        <option value="Strength" ${workout.type === 'Strength' ? 'selected' : ''}>Strength</option>
+        <option value="Hypertrophy" ${workout.type === 'Hypertrophy' ? 'selected' : ''}>Hypertrophy</option>
+      </select>
+    </div>
+    <div class="mb-12">
+      <label>Exercises (one per line)</label>
+      <textarea id="edit-workout-exercises" style="min-height:200px">${exercisesText}</textarea>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="updateCustomWorkout('${name}')">Save</button>
+      <button class="btn btn-danger" onclick="deleteCustomWorkout('${name}')">Delete</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `;
+  openModal(html);
+};
+
+window.updateCustomWorkout = function(name) {
+  const type = document.getElementById('edit-workout-type').value;
+  const exercisesText = document.getElementById('edit-workout-exercises').value.trim();
+
+  if (!exercisesText) {
+    showToast('Add exercises');
+    return;
+  }
+
+  const exercises = [];
+  const lines = exercisesText.split('\n').filter(l => l.trim());
+
+  for (const line of lines) {
+    const match = line.match(/^(.+?):\s*(\d+)\s*[×x]\s*(.+?),\s*(\d+)/i);
+    if (!match) {
+      showToast(`Invalid format in line: ${line}`);
+      return;
+    }
+
+    exercises.push({
+      name: match[1].trim(),
+      sets: parseInt(match[2]),
+      reps: match[3].trim(),
+      rest: parseInt(match[4])
+    });
+  }
+
+  APP_DATA.customWorkouts[name] = {
+    type,
+    exercises
+  };
+
+  saveData(APP_DATA);
+  showToast('Custom workout updated!');
+  closeModal();
+  renderPage();
+};
+
+window.deleteCustomWorkout = function(name) {
+  if (!confirm(`Delete "${name}"?`)) return;
+
+  delete APP_DATA.customWorkouts[name];
+  saveData(APP_DATA);
+  showToast('Custom workout deleted');
   closeModal();
   renderPage();
 };
