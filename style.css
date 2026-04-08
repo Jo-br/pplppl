@@ -511,6 +511,37 @@ label {
   font-variant-numeric: tabular-nums;
 }
 
+.set-tag-editable {
+  display: inline-block;
+  background: var(--accent-light);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  margin: 2px 2px 2px 0;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.set-tag-editable:hover {
+  background: var(--border);
+  padding-right: 20px;
+}
+
+.set-edit-x {
+  opacity: 0;
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: var(--red);
+  margin-left: 6px;
+  transition: opacity 0.15s ease;
+}
+
+.set-tag-editable:hover .set-edit-x {
+  opacity: 1;
+}
+
 /* ---- Comparison Arrows ---- */
 
 .change-up { color: var(--green); }
@@ -648,6 +679,7 @@ label {
 .rec-up { color: var(--green); }
 .rec-same { color: var(--amber); }
 .rec-down { color: var(--red); }
+.rec-deload { color: var(--amber); }
 
 /* ---- 1RM Results ---- */
 

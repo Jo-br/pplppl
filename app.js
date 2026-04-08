@@ -488,6 +488,20 @@ function getRecommendation(exercise, workoutType) {
   const isLower = LOWER_BODY.includes(exercise.name);
   const increment = isLower ? 5 : 2.5;
 
+  // Check if next week is deload
+  const currentWeek = getCycleWeek();
+  const isDeloadWeek = currentWeek === 4;
+  const isPreDeload = currentWeek === 3;
+
+  if (isDeloadWeek) {
+    // Deload week - suggest reduced weight
+    return {
+      action: 'deload',
+      text: `Deload week — reduce to ${roundTo2_5(weight * 0.65)} kg (65%)`,
+      newWeight: roundTo2_5(weight * 0.65)
+    };
+  }
+
   if (allHitTop) {
     return {
       action: 'increase',
@@ -798,6 +812,7 @@ function renderPage() {
     case 'recommendations': content.innerHTML = renderRecommendations(window._pageParams); break;
     case 'workout-select': content.innerHTML = renderWorkoutSelect(); break;
     case 'workout-live': content.innerHTML = renderWorkoutLive(); initWorkoutLive(); break;
+    case 'exercise-history': content.innerHTML = renderExerciseHistory(window._pageParams); break;
     default: content.innerHTML = renderDashboard(); break;
   }
 }
@@ -1051,11 +1066,11 @@ function renderSessionDetail(sessionId) {
 
     html += `<div class="exercise-row">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <span class="exercise-name">${ex.name}</span>
+        <span class="exercise-name" onclick="navigate('exercise-history', '${encodeURIComponent(ex.name)}'); event.stopPropagation()" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${ex.name}</span>
         ${comparison}
       </div>
       <div class="exercise-sets">
-        ${ex.workingSets.map(s => `<span class="set-tag">${s.r} × ${s.w} kg</span>`).join('')}
+        ${ex.workingSets.map(s => `<span class="set-tag">${s.r} × ${s.w} kg${s.rir !== undefined ? ` @${s.rir}` : ''}</span>`).join('')}
       </div>
     </div>`;
   }
@@ -1107,12 +1122,23 @@ function renderRecommendations(sessionId) {
     <h2>Next Session</h2>
     <p class="text-sm text-secondary mb-16">Recommendations based on ${session.workoutType} — ${formatDate(session.date)}</p>`;
 
+  const currentWeek = getCycleWeek();
+  const isDeloadWeek = currentWeek === 4;
+
+  if (isDeloadWeek) {
+    html += `<div class="card mb-16" style="background:var(--amber-bg);border-color:var(--amber)">
+      <div class="text-sm" style="color:var(--amber);font-weight:600">
+        ⚠️ Deload Week — Reduce weights to 60-70% for recovery
+      </div>
+    </div>`;
+  }
+
   for (const ex of session.exercises) {
     const rec = getRecommendation(ex, session.workoutType);
     if (!rec) continue;
 
     const [minRep, maxRep] = getRepRange(ex.name, session.workoutType);
-    const colorClass = rec.action === 'increase' ? 'rec-up' : rec.action === 'decrease' ? 'rec-down' : 'rec-same';
+    const colorClass = rec.action === 'increase' ? 'rec-up' : rec.action === 'decrease' ? 'rec-down' : rec.action === 'deload' ? 'rec-deload' : 'rec-same';
 
     html += `<div class="rec-card animate-in">
       <div class="rec-exercise">${ex.name}</div>
@@ -1120,7 +1146,7 @@ function renderRecommendations(sessionId) {
         Sets: ${ex.workingSets.map(s => `${s.r}×${s.w}kg`).join(', ')} · Range: ${minRep}-${maxRep}
       </div>
       <div class="rec-action ${colorClass}">
-        ${rec.action === 'increase' ? '↑' : rec.action === 'decrease' ? '↓' : '→'} ${rec.text}
+        ${rec.action === 'increase' ? '↑' : rec.action === 'decrease' ? '↓' : rec.action === 'deload' ? '⚠' : '→'} ${rec.text}
       </div>
     </div>`;
   }
@@ -1312,6 +1338,99 @@ function renderPRs() {
   }
 
   html += `</div>`;
+  return html;
+}
+
+// ---- Exercise History ----
+
+function renderExerciseHistory(exerciseName) {
+  if (!exerciseName) {
+    return `<div class="empty-state"><h3>Exercise not specified</h3></div>`;
+  }
+
+  // Decode URL-encoded name
+  exerciseName = decodeURIComponent(exerciseName);
+
+  // Get all sessions with this exercise
+  const history = [];
+  for (const session of APP_DATA.sessions) {
+    const ex = session.exercises.find(e => e.name === exerciseName);
+    if (ex && ex.workingSets.length > 0) {
+      // Find best set (highest e1RM)
+      const bestSet = ex.workingSets.reduce((best, s) => {
+        const e1rm = epley1RM(s.w, s.r);
+        const bestE1rm = epley1RM(best.w, best.r);
+        return e1rm > bestE1rm ? s : best;
+      }, ex.workingSets[0]);
+
+      history.push({
+        date: session.date,
+        sessionId: session.id,
+        workoutType: session.workoutType,
+        sets: ex.workingSets,
+        bestWeight: bestSet.w,
+        bestReps: bestSet.r,
+        e1rm: Math.round(epley1RM(bestSet.w, bestSet.r) * 10) / 10,
+        volume: ex.workingSets.reduce((sum, s) => sum + s.w * s.r, 0)
+      });
+    }
+  }
+
+  history.sort((a, b) => b.date.localeCompare(a.date));
+
+  let html = `<div class="animate-in">
+    <h2>${exerciseName}</h2>
+    <p class="text-sm text-secondary mb-16">${history.length} sessions recorded</p>`;
+
+  if (history.length === 0) {
+    html += `<div class="empty-state">
+      <h3>No history yet</h3>
+      <p class="text-sm">This exercise hasn't been logged</p>
+    </div>`;
+  } else {
+    // Summary stats
+    const bestE1RM = Math.max(...history.map(h => h.e1rm));
+    const bestWeight = Math.max(...history.map(h => h.bestWeight));
+    const totalVolume = history.reduce((sum, h) => sum + h.volume, 0);
+
+    html += `<div class="stats-grid mb-16 animate-in">
+      <div class="stat-block">
+        <div class="stat-value">${bestWeight}kg</div>
+        <div class="stat-label">Best Weight</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-value">${bestE1RM}kg</div>
+        <div class="stat-label">Est. 1RM</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-value">${history.length}</div>
+        <div class="stat-label">Sessions</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-value">${Math.round(totalVolume / 1000)}k</div>
+        <div class="stat-label">Total Vol</div>
+      </div>
+    </div>`;
+
+    // History list
+    for (const h of history) {
+      html += `<div class="card mb-12 animate-in" onclick="navigate('session','${h.sessionId}')">
+        <div class="card-header">
+          <span class="card-title">${formatDate(h.date)}</span>
+          <span class="card-badge badge-strength">${h.workoutType}</span>
+        </div>
+        <div class="exercise-sets mb-8">
+          ${h.sets.map(s => `<span class="set-tag">${s.r} × ${s.w} kg${s.rir !== undefined ? ` @${s.rir}` : ''}</span>`).join('')}
+        </div>
+        <div class="text-xs text-secondary">
+          Best: ${h.bestReps}×${h.bestWeight}kg · Est. 1RM: ${h.e1rm}kg · Volume: ${Math.round(h.volume)}kg
+        </div>
+      </div>`;
+    }
+  }
+
+  html += `<button class="btn btn-secondary btn-block mt-16" onclick="history.back()">Back</button>
+  </div>`;
   return html;
 }
 
@@ -1829,6 +1948,19 @@ function renderWorkoutLive() {
             <input type="number" id="live-weight" value="0" step="2.5" min="0" style="font-size:1.2rem;text-align:center" oninput="updatePlateCalculator()">
           </div>
         </div>
+        <div class="set-input-row mt-8">
+          <div style="flex:1">
+            <label>RIR (optional)</label>
+            <select id="live-rir" style="font-size:1rem;text-align:center">
+              <option value="">—</option>
+              <option value="0">0 (Failure)</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4+</option>
+            </select>
+          </div>
+        </div>
         <div id="plate-display" class="plate-display"></div>
         <button class="btn btn-primary btn-block mt-12" onclick="logLiveSet()">Log Set</button>
       </div>
@@ -1837,7 +1969,7 @@ function renderWorkoutLive() {
         <div class="mt-16">
           <div class="text-sm text-secondary mb-8">Completed Sets:</div>
           <div class="exercise-sets">
-            ${ex.completedSets.map(s => `<span class="set-tag">${s.r} × ${s.w} kg</span>`).join('')}
+            ${ex.completedSets.map((s, i) => `<span class="set-tag-editable" onclick="editLiveSet(${liveWorkout.currentExerciseIndex}, ${i})">${s.r} × ${s.w} kg${s.rir !== undefined ? ` @${s.rir}` : ''} <span class="set-edit-x">×</span></span>`).join('')}
           </div>
         </div>
       ` : ''}
@@ -1949,11 +2081,87 @@ window.updatePlateCalculator = function() {
   display.innerHTML = html;
 };
 
+window.editLiveSet = function(exerciseIndex, setIndex) {
+  if (!liveWorkout) return;
+
+  const ex = liveWorkout.exercises[exerciseIndex];
+  const set = ex.completedSets[setIndex];
+
+  const html = `
+    <h3 class="mb-12">Edit Set</h3>
+    <p class="text-sm text-secondary mb-12">${ex.name} - Set ${setIndex + 1}</p>
+    <div class="mb-12">
+      <label>Reps</label>
+      <input type="number" id="edit-reps" value="${set.r}" min="1">
+    </div>
+    <div class="mb-12">
+      <label>Weight (kg)</label>
+      <input type="number" id="edit-weight" value="${set.w}" step="2.5" min="0">
+    </div>
+    <div class="mb-12">
+      <label>RIR (optional)</label>
+      <select id="edit-rir">
+        <option value="" ${set.rir === undefined ? 'selected' : ''}>—</option>
+        <option value="0" ${set.rir === 0 ? 'selected' : ''}>0 (Failure)</option>
+        <option value="1" ${set.rir === 1 ? 'selected' : ''}>1</option>
+        <option value="2" ${set.rir === 2 ? 'selected' : ''}>2</option>
+        <option value="3" ${set.rir === 3 ? 'selected' : ''}>3</option>
+        <option value="4" ${set.rir === 4 ? 'selected' : ''}>4+</option>
+      </select>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="saveLiveSetEdit(${exerciseIndex}, ${setIndex})">Save</button>
+      <button class="btn btn-danger" onclick="deleteLiveSet(${exerciseIndex}, ${setIndex})">Delete</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `;
+
+  openModal(html);
+};
+
+window.saveLiveSetEdit = function(exerciseIndex, setIndex) {
+  if (!liveWorkout) return;
+
+  const ex = liveWorkout.exercises[exerciseIndex];
+  const reps = parseInt(document.getElementById('edit-reps').value);
+  const weight = parseFloat(document.getElementById('edit-weight').value);
+  const rir = document.getElementById('edit-rir').value;
+
+  if (!reps || reps < 1) {
+    showToast('Enter valid reps');
+    return;
+  }
+
+  const set = { r: reps, w: weight };
+  if (rir !== '') {
+    set.rir = parseInt(rir);
+  }
+
+  ex.completedSets[setIndex] = set;
+
+  closeModal();
+  renderPage();
+  showToast('Set updated');
+};
+
+window.deleteLiveSet = function(exerciseIndex, setIndex) {
+  if (!liveWorkout) return;
+  if (!confirm('Delete this set?')) return;
+
+  const ex = liveWorkout.exercises[exerciseIndex];
+  ex.completedSets.splice(setIndex, 1);
+
+  closeModal();
+  renderPage();
+  showToast('Set deleted');
+};
+
 window.logLiveSet = function() {
   if (!liveWorkout) return;
 
   const reps = parseInt(document.getElementById('live-reps').value);
   const weight = parseFloat(document.getElementById('live-weight').value);
+  const rir = document.getElementById('live-rir')?.value;
 
   if (!reps || reps < 1) {
     showToast('Enter reps');
@@ -1961,7 +2169,11 @@ window.logLiveSet = function() {
   }
 
   const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
-  ex.completedSets.push({ r: reps, w: weight });
+  const set = { r: reps, w: weight };
+  if (rir !== '') {
+    set.rir = parseInt(rir);
+  }
+  ex.completedSets.push(set);
 
   // Start rest timer
   if (ex.completedSets.length < ex.targetSets) {
