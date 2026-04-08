@@ -156,7 +156,10 @@ function getDefaultData() {
       height: 185,
       cycleStartDate: '2026-03-23',
       currentWeek: 1,
-    }
+      darkMode: false,
+    },
+    prs: {}, // { exerciseName: { weight: { value, date, sessionId }, reps: { value, weight, date, sessionId }, e1rm: { value, date, sessionId } } }
+    exerciseNotes: {} // { exerciseName: "notes text" }
   };
 }
 
@@ -231,6 +234,30 @@ let APP_DATA = loadData();
 
 function roundTo2_5(w) {
   return Math.round(w / 2.5) * 2.5;
+}
+
+function calculatePlates(totalWeight) {
+  const barWeight = 20;
+  if (totalWeight <= barWeight) return [];
+
+  const weightPerSide = (totalWeight - barWeight) / 2;
+  const plates = [25, 20, 15, 10, 5, 2.5, 1.25];
+  const result = [];
+  let remaining = weightPerSide;
+
+  for (const plate of plates) {
+    while (remaining >= plate) {
+      result.push(plate);
+      remaining -= plate;
+    }
+  }
+
+  // Handle rounding errors
+  if (remaining > 0.1) {
+    result.push(remaining);
+  }
+
+  return result;
 }
 
 function epley1RM(w, r) {
@@ -619,6 +646,78 @@ function getWeeksTraining() {
   return Math.max(1, Math.ceil(days / 7));
 }
 
+// ---- PR Tracking ----
+
+function checkAndUpdatePRs(session) {
+  if (!APP_DATA.prs) APP_DATA.prs = {};
+  const newPRs = [];
+
+  for (const ex of session.exercises) {
+    if (!APP_DATA.prs[ex.name]) {
+      APP_DATA.prs[ex.name] = {};
+    }
+
+    const prs = APP_DATA.prs[ex.name];
+
+    // Check each working set
+    for (const set of ex.workingSets) {
+      // Weight PR
+      if (!prs.weight || set.w > prs.weight.value) {
+        prs.weight = { value: set.w, date: session.date, sessionId: session.id };
+        newPRs.push({ exercise: ex.name, type: 'weight', value: set.w });
+      }
+
+      // Reps PR at this weight
+      const repKey = `reps_${set.w}`;
+      if (!prs[repKey] || set.r > prs[repKey].value) {
+        prs[repKey] = { value: set.r, weight: set.w, date: session.date, sessionId: session.id };
+        newPRs.push({ exercise: ex.name, type: 'reps', value: set.r, weight: set.w });
+      }
+
+      // Estimated 1RM PR
+      const e1rm = epley1RM(set.w, set.r);
+      if (!prs.e1rm || e1rm > prs.e1rm.value) {
+        prs.e1rm = { value: e1rm, date: session.date, sessionId: session.id, weight: set.w, reps: set.r };
+        newPRs.push({ exercise: ex.name, type: 'e1rm', value: Math.round(e1rm * 10) / 10 });
+      }
+    }
+  }
+
+  if (newPRs.length > 0) {
+    saveData(APP_DATA);
+  }
+
+  return newPRs;
+}
+
+function getAllPRs() {
+  if (!APP_DATA.prs) return [];
+  const prs = [];
+
+  for (const [exercise, records] of Object.entries(APP_DATA.prs)) {
+    if (records.weight) {
+      prs.push({
+        exercise,
+        type: 'Weight',
+        value: `${records.weight.value}kg`,
+        date: records.weight.date,
+        sessionId: records.weight.sessionId
+      });
+    }
+    if (records.e1rm) {
+      prs.push({
+        exercise,
+        type: 'Est. 1RM',
+        value: `${Math.round(records.e1rm.value * 10) / 10}kg`,
+        date: records.e1rm.date,
+        sessionId: records.e1rm.sessionId
+      });
+    }
+  }
+
+  return prs.sort((a, b) => b.date.localeCompare(a.date));
+}
+
 // ---- Chart.js Lazy Load ----
 
 let chartJsLoaded = false;
@@ -690,6 +789,7 @@ function renderPage() {
     case 'dashboard': content.innerHTML = renderDashboard(); initDashboardCharts(); break;
     case 'log': content.innerHTML = renderLog(); break;
     case 'progress': content.innerHTML = renderProgress(); initProgressCharts(); break;
+    case 'prs': content.innerHTML = renderPRs(); break;
     case 'volume': content.innerHTML = renderVolume(); break;
     case 'warmup': content.innerHTML = renderWarmup(); break;
     case 'estimator': content.innerHTML = renderEstimator(); break;
@@ -865,6 +965,9 @@ window.handleParseLog = function() {
   }
 
   APP_DATA.sessions.push(session);
+
+  // Check for PRs
+  const newPRs = checkAndUpdatePRs(session);
   saveData(APP_DATA);
 
   // Show parsed summary
@@ -1168,6 +1271,50 @@ function initProgressCharts() {
   });
 }
 
+// ---- PRs Page ----
+
+function renderPRs() {
+  const allPRs = getAllPRs();
+
+  let html = `<div class="animate-in">
+    <h2>Personal Records</h2>
+    <p class="text-sm text-secondary mb-16">Your best performances</p>`;
+
+  if (allPRs.length === 0) {
+    html += `<div class="empty-state">
+      <h3>No PRs yet</h3>
+      <p class="text-sm">Complete workouts to start tracking PRs</p>
+    </div>`;
+  } else {
+    // Group by exercise
+    const byExercise = {};
+    for (const pr of allPRs) {
+      if (!byExercise[pr.exercise]) {
+        byExercise[pr.exercise] = [];
+      }
+      byExercise[pr.exercise].push(pr);
+    }
+
+    for (const [exercise, prs] of Object.entries(byExercise)) {
+      html += `<div class="card mb-12 animate-in">
+        <div class="card-title mb-8">${exercise}</div>`;
+
+      for (const pr of prs) {
+        html += `<div class="pr-row" onclick="navigate('session','${pr.sessionId}')">
+          <div class="pr-type">${pr.type}</div>
+          <div class="pr-value">${pr.value}</div>
+          <div class="pr-date">${formatDate(pr.date)}</div>
+        </div>`;
+      }
+
+      html += `</div>`;
+    }
+  }
+
+  html += `</div>`;
+  return html;
+}
+
 // ---- Volume Tracker ----
 
 function renderVolume() {
@@ -1355,6 +1502,16 @@ function renderSettings() {
     <h2>Settings</h2>
 
     <div class="settings-section">
+      <h3>Appearance</h3>
+      <div class="setting-row">
+        <label>Dark Mode</label>
+        <button class="btn btn-sm ${s.darkMode ? 'btn-primary' : 'btn-secondary'}" onclick="toggleDarkMode()">
+          ${s.darkMode ? 'On' : 'Off'}
+        </button>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>Cycle</h3>
       <div class="setting-row">
         <label>Current Week</label>
@@ -1427,6 +1584,21 @@ window.saveSetting = function(key, value) {
   saveData(APP_DATA);
   showToast('Setting saved');
 };
+
+window.toggleDarkMode = function() {
+  APP_DATA.settings.darkMode = !APP_DATA.settings.darkMode;
+  saveData(APP_DATA);
+  applyDarkMode();
+  renderPage();
+};
+
+function applyDarkMode() {
+  if (APP_DATA.settings.darkMode) {
+    document.body.classList.add('dark-mode');
+  } else {
+    document.body.classList.remove('dark-mode');
+  }
+}
 
 window.addBodyweight = function() {
   const date = document.getElementById('bw-date').value;
@@ -1523,14 +1695,31 @@ function renderWorkoutSelect() {
 
   for (const [name, workout] of Object.entries(WORKOUTS)) {
     const badgeClass = workout.type === 'Strength' ? 'badge-strength' : 'badge-hypertrophy';
-    html += `<div class="card session-card mb-12 animate-in" onclick="startLiveWorkout('${name}')">
+
+    // Find last session of this type
+    const lastSession = [...APP_DATA.sessions]
+      .filter(s => s.workoutType === name)
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+
+    const hasHistory = !!lastSession;
+
+    html += `<div class="card session-card mb-12 animate-in">
       <div class="card-header">
         <span class="card-title">${name}</span>
         <span class="card-badge ${badgeClass}">${workout.type}</span>
       </div>
-      <div class="text-sm text-secondary">
+      <div class="text-sm text-secondary mb-8">
         ${workout.exercises.map(e => `${e.name} ${e.sets}×${e.reps}`).join(' · ')}
       </div>
+      ${hasHistory ? `
+        <div class="text-xs text-secondary mb-8">Last: ${formatDate(lastSession.date)}</div>
+        <div class="btn-group">
+          <button class="btn btn-sm btn-primary" onclick="startLiveWorkout('${name}', true)">Repeat Last</button>
+          <button class="btn btn-sm btn-secondary" onclick="startLiveWorkout('${name}', false)">Start Fresh</button>
+        </div>
+      ` : `
+        <button class="btn btn-sm btn-primary btn-block" onclick="startLiveWorkout('${name}', false)">Start</button>
+      `}
     </div>`;
   }
 
@@ -1539,24 +1728,46 @@ function renderWorkoutSelect() {
   return html;
 }
 
-window.startLiveWorkout = function(workoutType) {
+window.startLiveWorkout = function(workoutType, repeatLast = false) {
   const template = WORKOUTS[workoutType];
   if (!template) return;
+
+  // Get last session for pre-filling
+  let lastSession = null;
+  if (repeatLast) {
+    lastSession = [...APP_DATA.sessions]
+      .filter(s => s.workoutType === workoutType)
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+  }
 
   liveWorkout = {
     workoutType,
     startTime: new Date(),
-    exercises: template.exercises.map(e => ({
-      name: e.name,
-      targetSets: e.sets,
-      targetReps: e.reps,
-      restTime: e.rest,
-      completedSets: []
-    })),
+    exercises: template.exercises.map(e => {
+      const ex = {
+        name: e.name,
+        targetSets: e.sets,
+        targetReps: e.reps,
+        restTime: e.rest,
+        completedSets: [],
+        lastWeights: null
+      };
+
+      // Pre-fill last weights if repeating
+      if (lastSession) {
+        const lastEx = lastSession.exercises.find(ex => ex.name === e.name);
+        if (lastEx && lastEx.workingSets.length > 0) {
+          ex.lastWeights = lastEx.workingSets.map(s => ({ r: s.r, w: s.w }));
+        }
+      }
+
+      return ex;
+    }),
     currentExerciseIndex: 0,
     currentSetIndex: 0,
     isResting: false,
-    restRemaining: 0
+    restRemaining: 0,
+    repeatLast
   };
 
   navigate('workout-live');
@@ -1584,9 +1795,22 @@ function renderWorkoutLive() {
     </div>
 
     <div class="card mb-16">
-      <h3 class="mb-8">${ex.name}</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 class="mb-0">${ex.name}</h3>
+        <button class="btn btn-sm btn-secondary" onclick="openExerciseNotes('${ex.name}')" style="padding:4px 12px;min-height:28px;font-size:0.75rem">Notes</button>
+      </div>
       <div class="text-sm text-secondary mb-12">Target: ${ex.targetSets} sets × ${ex.targetReps} reps · Rest: ${ex.restTime}s</div>
       <div class="text-sm mb-12">Completed: ${setProgress} sets</div>
+      ${liveWorkout.repeatLast && ex.lastWeights && ex.lastWeights.length > 0 ? `
+        <div class="text-xs mb-12" style="padding:8px;background:var(--accent-light);border-radius:6px">
+          <strong>Last time:</strong> ${ex.lastWeights.map(s => `${s.r}×${s.w}kg`).join(', ')}
+        </div>
+      ` : ''}
+      ${APP_DATA.exerciseNotes && APP_DATA.exerciseNotes[ex.name] ? `
+        <div class="exercise-note-display">
+          📝 ${APP_DATA.exerciseNotes[ex.name]}
+        </div>
+      ` : ''}
 
       <div id="rest-timer-container" class="rest-timer-container hidden">
         <div class="rest-timer-label">Rest</div>
@@ -1602,9 +1826,10 @@ function renderWorkoutLive() {
           </div>
           <div style="flex:1">
             <label>Weight (kg)</label>
-            <input type="number" id="live-weight" value="0" step="2.5" min="0" style="font-size:1.2rem;text-align:center">
+            <input type="number" id="live-weight" value="0" step="2.5" min="0" style="font-size:1.2rem;text-align:center" oninput="updatePlateCalculator()">
           </div>
         </div>
+        <div id="plate-display" class="plate-display"></div>
         <button class="btn btn-primary btn-block mt-12" onclick="logLiveSet()">Log Set</button>
       </div>
 
@@ -1648,23 +1873,81 @@ function initWorkoutLive() {
     }
   }, 1000);
 
-  // Check if we should auto-focus weight input
+  // Pre-fill weight input
   const weightInput = document.getElementById('live-weight');
   if (weightInput) {
-    // Pre-fill weight from last session
     const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
-    const lastSession = [...APP_DATA.sessions]
-      .filter(s => s.workoutType === liveWorkout.workoutType)
-      .sort((a, b) => b.date.localeCompare(a.date))[0];
 
-    if (lastSession) {
-      const lastEx = lastSession.exercises.find(e => e.name === ex.name);
-      if (lastEx && lastEx.workingSets.length > 0) {
-        weightInput.value = lastEx.workingSets[0].w;
+    // Use lastWeights if available (from repeat last)
+    if (ex.lastWeights && ex.lastWeights.length > 0) {
+      const setIndex = ex.completedSets.length;
+      if (setIndex < ex.lastWeights.length) {
+        weightInput.value = ex.lastWeights[setIndex].w;
+        const repsInput = document.getElementById('live-reps');
+        if (repsInput) {
+          repsInput.value = ex.lastWeights[setIndex].r;
+        }
+      } else {
+        weightInput.value = ex.lastWeights[ex.lastWeights.length - 1].w;
+      }
+    } else {
+      // Otherwise try to find last session
+      const lastSession = [...APP_DATA.sessions]
+        .filter(s => s.workoutType === liveWorkout.workoutType)
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
+
+      if (lastSession) {
+        const lastEx = lastSession.exercises.find(e => e.name === ex.name);
+        if (lastEx && lastEx.workingSets.length > 0) {
+          weightInput.value = lastEx.workingSets[0].w;
+        }
       }
     }
+
+    // Update plate calculator
+    updatePlateCalculator();
   }
 }
+
+window.updatePlateCalculator = function() {
+  const weight = parseFloat(document.getElementById('live-weight')?.value || 0);
+  const display = document.getElementById('plate-display');
+  if (!display) return;
+
+  if (weight <= 20) {
+    display.innerHTML = '';
+    return;
+  }
+
+  const plates = calculatePlates(weight);
+  if (plates.length === 0) {
+    display.innerHTML = '<div class="text-sm text-secondary">Bar only (20kg)</div>';
+    return;
+  }
+
+  const plateColors = {
+    25: '#e53935',    // red
+    20: '#1e88e5',    // blue
+    15: '#fdd835',    // yellow
+    10: '#43a047',    // green
+    5: '#ffffff',     // white
+    2.5: '#000000',   // black
+    1.25: '#9e9e9e'   // grey
+  };
+
+  let html = '<div class="plate-calculator">';
+  html += '<div class="text-xs text-secondary mb-4">Per side:</div>';
+  html += '<div class="plates-row">';
+
+  for (const p of plates) {
+    const color = plateColors[p] || '#757575';
+    const textColor = (p === 5 || p === 15) ? '#000' : '#fff';
+    html += `<div class="plate-viz" style="background:${color};color:${textColor}">${p}</div>`;
+  }
+
+  html += '</div></div>';
+  display.innerHTML = html;
+};
 
 window.logLiveSet = function() {
   if (!liveWorkout) return;
@@ -1768,6 +2051,9 @@ window.finishWorkout = function() {
   };
 
   APP_DATA.sessions.push(session);
+
+  // Check for PRs
+  const newPRs = checkAndUpdatePRs(session);
   saveData(APP_DATA);
 
   // Clean up
@@ -1775,7 +2061,11 @@ window.finishWorkout = function() {
   if (restTimer) clearInterval(restTimer);
   liveWorkout = null;
 
-  showToast('Workout saved!');
+  if (newPRs.length > 0) {
+    showToast(`Workout saved! ${newPRs.length} new PR${newPRs.length > 1 ? 's' : ''}! 🎉`);
+  } else {
+    showToast('Workout saved!');
+  }
   navigate('session', session.id);
 };
 
@@ -1789,8 +2079,54 @@ window.cancelWorkout = function() {
   navigate('dashboard');
 };
 
+window.openExerciseNotes = function(exerciseName) {
+  if (!APP_DATA.exerciseNotes) APP_DATA.exerciseNotes = {};
+  const currentNote = APP_DATA.exerciseNotes[exerciseName] || '';
+
+  const html = `
+    <h3 class="mb-12">Exercise Notes</h3>
+    <p class="text-sm text-secondary mb-12">${exerciseName}</p>
+    <textarea id="exercise-note-input" placeholder="Add form cues, tips, or reminders..." style="min-height:120px">${currentNote}</textarea>
+    <div class="btn-group mt-16">
+      <button class="btn btn-primary" onclick="saveExerciseNote('${exerciseName}')">Save</button>
+      ${currentNote ? `<button class="btn btn-secondary" onclick="deleteExerciseNote('${exerciseName}')">Delete</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `;
+
+  openModal(html);
+};
+
+window.saveExerciseNote = function(exerciseName) {
+  if (!APP_DATA.exerciseNotes) APP_DATA.exerciseNotes = {};
+  const note = document.getElementById('exercise-note-input').value.trim();
+
+  if (note) {
+    APP_DATA.exerciseNotes[exerciseName] = note;
+  } else {
+    delete APP_DATA.exerciseNotes[exerciseName];
+  }
+
+  saveData(APP_DATA);
+  showToast('Note saved');
+  closeModal();
+  renderPage();
+};
+
+window.deleteExerciseNote = function(exerciseName) {
+  if (!confirm('Delete this note?')) return;
+  if (APP_DATA.exerciseNotes) {
+    delete APP_DATA.exerciseNotes[exerciseName];
+  }
+  saveData(APP_DATA);
+  showToast('Note deleted');
+  closeModal();
+  renderPage();
+};
+
 // ---- Initialize ----
 
 document.addEventListener('DOMContentLoaded', () => {
+  applyDarkMode();
   handleHash();
 });
