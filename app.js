@@ -2134,7 +2134,8 @@ window.startLiveWorkout = function(workoutType, repeatLast = false) {
         targetReps: e.reps,
         restTime: e.rest,
         completedSets: [],
-        lastWeights: null
+        lastWeights: null,
+        supersetWithNext: false
       };
 
       // Pre-fill last weights if repeating
@@ -2243,7 +2244,16 @@ function renderWorkoutLive() {
       ` : ''}
     </div>
 
-    <div class="btn-group">
+    ${liveWorkout.currentExerciseIndex < liveWorkout.exercises.length - 1 ? `
+      <div class="mt-12 text-center">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="superset-toggle" ${ex.supersetWithNext ? 'checked' : ''} onchange="toggleSuperset()" style="width:18px;height:18px">
+          <span class="text-sm">Superset with next exercise (skip rest)</span>
+        </label>
+      </div>
+    ` : ''}
+
+    <div class="btn-group mt-12">
       <button class="btn btn-secondary" onclick="previousExercise()">← Previous</button>
       <button class="btn btn-secondary" onclick="nextExercise()">Next →</button>
     </div>
@@ -2306,6 +2316,44 @@ function initWorkoutLive() {
 
     // Update plate calculator
     updatePlateCalculator();
+  }
+
+  // Add swipe gesture support
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchEndX = 0;
+  let touchEndY = 0;
+
+  const workoutContainer = document.querySelector('.live-workout');
+  if (workoutContainer) {
+    workoutContainer.addEventListener('touchstart', function(e) {
+      touchStartX = e.changedTouches[0].screenX;
+      touchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
+
+    workoutContainer.addEventListener('touchend', function(e) {
+      touchEndX = e.changedTouches[0].screenX;
+      touchEndY = e.changedTouches[0].screenY;
+      handleSwipe();
+    }, { passive: true });
+  }
+
+  function handleSwipe() {
+    const diffX = touchEndX - touchStartX;
+    const diffY = touchEndY - touchStartY;
+
+    // Only trigger if horizontal swipe is more prominent than vertical
+    if (Math.abs(diffX) > Math.abs(diffY)) {
+      const minSwipeDistance = 50;
+
+      if (diffX > minSwipeDistance) {
+        // Swipe right - previous exercise
+        previousExercise();
+      } else if (diffX < -minSwipeDistance) {
+        // Swipe left - next exercise
+        nextExercise();
+      }
+    }
   }
 }
 
@@ -2443,8 +2491,19 @@ window.logLiveSet = function() {
   }
   ex.completedSets.push(set);
 
-  // Start rest timer
-  if (ex.completedSets.length < ex.targetSets) {
+  // Check if superset and all sets complete
+  const allSetsComplete = ex.completedSets.length >= ex.targetSets;
+  const isSuperset = ex.supersetWithNext;
+
+  if (allSetsComplete && isSuperset && liveWorkout.currentExerciseIndex < liveWorkout.exercises.length - 1) {
+    // Auto-advance to next exercise in superset
+    showToast('Superset: Next exercise!');
+    setTimeout(() => {
+      liveWorkout.currentExerciseIndex++;
+      renderPage();
+    }, 500);
+  } else if (!allSetsComplete) {
+    // Start rest timer for next set
     startRestTimer(ex.restTime);
   }
 
@@ -2485,6 +2544,13 @@ window.skipRest = function() {
   const inputContainer = document.getElementById('set-input-container');
   if (container) container.classList.add('hidden');
   if (inputContainer) inputContainer.classList.remove('hidden');
+};
+
+window.toggleSuperset = function() {
+  if (!liveWorkout) return;
+  const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
+  ex.supersetWithNext = document.getElementById('superset-toggle')?.checked || false;
+  showToast(ex.supersetWithNext ? 'Superset enabled' : 'Superset disabled');
 };
 
 window.nextExercise = function() {
