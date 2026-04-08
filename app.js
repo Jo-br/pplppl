@@ -658,6 +658,29 @@ window.changeWeek = function(delta) {
   showToast(`Week ${newWeek}${newWeek === 4 ? ' (Deload)' : ''}`);
 };
 
+function getNextWorkout() {
+  // PPLPPL rotation
+  const rotation = ['Push A', 'Pull A', 'Legs A', 'Push B', 'Pull B', 'Legs B'];
+
+  // Find last workout
+  const sorted = [...APP_DATA.sessions].sort((a, b) => b.date.localeCompare(a.date));
+  if (sorted.length === 0) return 'Push A'; // Start with Push A
+
+  const lastWorkout = sorted[0].workoutType;
+  const lastIndex = rotation.indexOf(lastWorkout);
+
+  if (lastIndex === -1) return 'Push A'; // Unknown workout, restart
+
+  // Next in rotation
+  const nextIndex = (lastIndex + 1) % rotation.length;
+  return rotation[nextIndex];
+}
+
+window.continueTraining = function() {
+  const nextWorkout = getNextWorkout();
+  startLiveWorkout(nextWorkout, true); // Always repeat last for continuity
+};
+
 // ---- Streak Calculation ----
 
 function getStreak() {
@@ -1000,9 +1023,13 @@ function renderDashboard() {
   }
 
   // Quick action buttons
-  html += `<div class="mt-24 animate-in btn-group">
-    <button class="btn btn-primary" style="flex:1" onclick="navigate('workout-select')">Start Workout</button>
-    <button class="btn btn-secondary" style="flex:1" onclick="navigate('log')">Log Past Workout</button>
+  const nextWorkout = getNextWorkout();
+  html += `<div class="mt-24 animate-in">
+    <button class="btn btn-primary btn-block" onclick="continueTraining()">Continue Training: ${nextWorkout}</button>
+    <div class="btn-group mt-12">
+      <button class="btn btn-secondary" style="flex:1" onclick="navigate('workout-select')">Choose Workout</button>
+      <button class="btn btn-secondary" style="flex:1" onclick="navigate('log')">Log Past</button>
+    </div>
   </div>`;
 
   html += `</div>`;
@@ -2168,7 +2195,21 @@ function renderWorkoutLive() {
 
   const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
   const progress = `${liveWorkout.currentExerciseIndex + 1}/${liveWorkout.exercises.length}`;
-  const setProgress = `${ex.completedSets.length}/${ex.targetSets}`;
+  const currentSet = ex.completedSets.length + 1;
+
+  // Get recommended weight for next set
+  let recommendedWeight = 0;
+  if (ex.lastWeights && ex.lastWeights.length > 0) {
+    const setIndex = ex.completedSets.length;
+    recommendedWeight = setIndex < ex.lastWeights.length
+      ? ex.lastWeights[setIndex].w
+      : ex.lastWeights[ex.lastWeights.length - 1].w;
+  }
+
+  // Calculate warmup sets
+  const warmupSets = calculateWarmup(ex.name, recommendedWeight || 100);
+  const workingSets = warmupSets.filter(s => s.label === 'Working');
+  const actualWarmups = warmupSets.filter(s => s.label !== 'Working');
 
   let html = `<div class="animate-in live-workout">
     <div class="card mb-16">
@@ -2176,27 +2217,60 @@ function renderWorkoutLive() {
         <span class="card-title">${liveWorkout.workoutType}</span>
         <span class="text-sm text-secondary">Exercise ${progress}</span>
       </div>
-      <div class="live-timer" id="workout-timer">00:00</div>
     </div>
 
     <div class="card mb-16">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <h3 class="mb-0">${ex.name}</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2 class="mb-0">${ex.name}</h2>
         <div style="display:flex;gap:6px">
-          ${EXERCISE_SUBSTITUTIONS[ex.name] ? `<button class="btn btn-sm btn-secondary" onclick="substituteExercise()" style="padding:4px 12px;min-height:28px;font-size:0.75rem">Substitute</button>` : ''}
-          <button class="btn btn-sm btn-secondary" onclick="openExerciseNotes('${ex.name}')" style="padding:4px 12px;min-height:28px;font-size:0.75rem">Notes</button>
+          ${EXERCISE_SUBSTITUTIONS[ex.name] ? `<button class="btn btn-sm btn-secondary" onclick="substituteExercise()" style="padding:4px 8px;min-height:28px;font-size:0.7rem">Swap</button>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="openExerciseNotes('${ex.name}')" style="padding:4px 8px;min-height:28px;font-size:0.7rem">Notes</button>
         </div>
       </div>
-      <div class="text-sm text-secondary mb-12">Target: ${ex.targetSets} sets × ${ex.targetReps} reps · Rest: ${ex.restTime}s</div>
-      <div class="text-sm mb-12">Completed: ${setProgress} sets</div>
+
+      ${APP_DATA.exerciseNotes && APP_DATA.exerciseNotes[ex.name] ? `
+        <div class="exercise-note-display mb-12">
+          📝 ${APP_DATA.exerciseNotes[ex.name]}
+        </div>
+      ` : ''}
+
+      <!-- Warmup Sets -->
+      ${actualWarmups.length > 0 && ex.completedSets.length === 0 ? `
+        <div class="warmup-section mb-16">
+          <div class="text-sm font-weight-600 mb-8">Warmup</div>
+          ${actualWarmups.map(s => `
+            <div class="warmup-set-item">
+              <span class="warmup-set-label">${s.label}</span>
+              <span class="warmup-set-value">${s.reps} × ${s.weight}kg</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      <!-- Set Progress -->
+      <div class="set-progress-header mb-12">
+        <span class="text-lg" style="font-weight:700">Set ${currentSet} of ${ex.targetSets}</span>
+        <span class="text-sm text-secondary">${ex.targetReps} reps · ${ex.restTime}s rest</span>
+      </div>
+
+      <!-- Completed Sets History -->
+      ${ex.completedSets.length > 0 ? `
+        <div class="mb-16">
+          <div class="text-xs text-secondary mb-6">Completed:</div>
+          <div class="set-history">
+            ${ex.completedSets.map((s, i) => `
+              <div class="set-history-item" onclick="editLiveSet(${liveWorkout.currentExerciseIndex}, ${i})">
+                <span class="set-history-number">${i + 1}</span>
+                <span class="set-history-value">${s.r} × ${s.w}kg${s.rir !== undefined ? ` @${s.rir}` : ''}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
       ${liveWorkout.repeatLast && ex.lastWeights && ex.lastWeights.length > 0 ? `
         <div class="text-xs mb-12" style="padding:8px;background:var(--accent-light);border-radius:6px">
           <strong>Last time:</strong> ${ex.lastWeights.map(s => `${s.r}×${s.w}kg`).join(', ')}
-        </div>
-      ` : ''}
-      ${APP_DATA.exerciseNotes && APP_DATA.exerciseNotes[ex.name] ? `
-        <div class="exercise-note-display">
-          📝 ${APP_DATA.exerciseNotes[ex.name]}
         </div>
       ` : ''}
 
@@ -2233,15 +2307,6 @@ function renderWorkoutLive() {
         <div id="plate-display" class="plate-display"></div>
         <button class="btn btn-primary btn-block mt-12" onclick="logLiveSet()">Log Set</button>
       </div>
-
-      ${ex.completedSets.length > 0 ? `
-        <div class="mt-16">
-          <div class="text-sm text-secondary mb-8">Completed Sets:</div>
-          <div class="exercise-sets">
-            ${ex.completedSets.map((s, i) => `<span class="set-tag-editable" onclick="editLiveSet(${liveWorkout.currentExerciseIndex}, ${i})">${s.r} × ${s.w} kg${s.rir !== undefined ? ` @${s.rir}` : ''} <span class="set-edit-x">×</span></span>`).join('')}
-          </div>
-        </div>
-      ` : ''}
     </div>
 
     ${liveWorkout.currentExerciseIndex < liveWorkout.exercises.length - 1 ? `
@@ -2270,18 +2335,6 @@ function renderWorkoutLive() {
 
 function initWorkoutLive() {
   if (!liveWorkout) return;
-
-  // Start workout timer
-  if (workoutTimer) clearInterval(workoutTimer);
-  workoutTimer = setInterval(() => {
-    const elapsed = Math.floor((new Date() - liveWorkout.startTime) / 1000);
-    const mins = Math.floor(elapsed / 60);
-    const secs = elapsed % 60;
-    const timerEl = document.getElementById('workout-timer');
-    if (timerEl) {
-      timerEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-  }, 1000);
 
   // Pre-fill weight input
   const weightInput = document.getElementById('live-weight');

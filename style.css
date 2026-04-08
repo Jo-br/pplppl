@@ -1030,6 +1030,78 @@ label {
   font-variant-numeric: tabular-nums;
 }
 
+.warmup-section {
+  background: var(--accent-light);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+}
+
+.warmup-set-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 0.85rem;
+}
+
+.warmup-set-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.warmup-set-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.set-progress-header {
+  text-align: center;
+  padding: 12px;
+  background: var(--accent-light);
+  border-radius: var(--radius-sm);
+}
+
+.set-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.set-history-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--accent-light);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.set-history-item:hover {
+  background: var(--border);
+  transform: translateY(-2px);
+}
+
+.set-history-number {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--card-bg);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.set-history-value {
+  font-weight: 600;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .rest-timer-container {
   text-align: center;
   padding: 24px;
