@@ -2237,7 +2237,13 @@ function renderWorkoutLive() {
       <!-- Warmup Sets -->
       ${actualWarmups.length > 0 && ex.completedSets.length === 0 ? `
         <div class="warmup-section mb-16">
-          <div class="text-sm font-weight-600 mb-8">Warmup</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="text-sm font-weight-600">Warmup Sets</div>
+            <div class="text-xs text-secondary">Do these - don't log</div>
+          </div>
+          <div class="text-xs mb-8" style="color:var(--text-secondary);font-style:italic">
+            ℹ️ Perform these warmup sets first, then use "Log Set" below for your working sets
+          </div>
           ${actualWarmups.map(s => `
             <div class="warmup-set-item">
               <span class="warmup-set-label">${s.label}</span>
