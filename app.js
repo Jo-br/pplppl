@@ -2123,7 +2123,10 @@ function renderWorkoutSelect() {
     html += `<div class="card session-card mb-12 animate-in">
       <div class="card-header">
         <span class="card-title">${name}${isCustom ? ' ⭐' : ''}</span>
-        <span class="card-badge ${badgeClass}">${workout.type}</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();editWorkout('${name}')" style="padding:4px 8px;min-height:28px;font-size:0.7rem">Edit</button>
+          <span class="card-badge ${badgeClass}">${workout.type}</span>
+        </div>
       </div>
       <div class="text-sm text-secondary mb-8">
         ${workout.exercises.map(e => `${e.name} ${e.sets}×${e.reps}`).join(' · ')}
@@ -2764,6 +2767,95 @@ window.deleteExerciseNote = function(exerciseName) {
 };
 
 // ---- Custom Workouts ----
+
+window.editWorkout = function(workoutName) {
+  // Get workout from either WORKOUTS or custom workouts
+  const workout = WORKOUTS[workoutName] || (APP_DATA.customWorkouts && APP_DATA.customWorkouts[workoutName]);
+  if (!workout) return;
+
+  const isPreset = !!WORKOUTS[workoutName];
+  const exercisesText = workout.exercises.map(e => `${e.name}: ${e.sets}×${e.reps}, ${e.rest}`).join('\n');
+
+  const html = `
+    <h3 class="mb-12">Edit Workout</h3>
+    ${isPreset ? '<div class="text-xs text-secondary mb-12">💡 Editing a preset workout will create your own custom version</div>' : ''}
+    <div class="mb-12">
+      <label>Workout Name</label>
+      <input type="text" id="edit-workout-name-field" value="${workoutName}" ${isPreset ? 'disabled' : ''}>
+    </div>
+    <div class="mb-12">
+      <label>Type</label>
+      <select id="edit-workout-type-field">
+        <option value="Strength" ${workout.type === 'Strength' ? 'selected' : ''}>Strength</option>
+        <option value="Hypertrophy" ${workout.type === 'Hypertrophy' ? 'selected' : ''}>Hypertrophy</option>
+      </select>
+    </div>
+    <div class="mb-12">
+      <label>Exercises (one per line)</label>
+      <textarea id="edit-workout-exercises-field" style="min-height:280px;font-family:monospace;font-size:0.85rem">${exercisesText}</textarea>
+      <div class="text-xs text-secondary mt-4">Format: Exercise Name: sets×reps, rest(seconds)</div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="saveEditedWorkout('${workoutName}', ${isPreset})">Save Changes</button>
+      ${!isPreset ? `<button class="btn btn-danger" onclick="deleteCustomWorkout('${workoutName}')">Delete</button>` : ''}
+      ${!isPreset && isPreset ? `<button class="btn btn-secondary" onclick="resetWorkoutToDefault('${workoutName}')">Reset to Default</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `;
+  openModal(html);
+};
+
+window.saveEditedWorkout = function(originalName, wasPreset) {
+  if (!APP_DATA.customWorkouts) APP_DATA.customWorkouts = {};
+
+  const type = document.getElementById('edit-workout-type-field').value;
+  const exercisesText = document.getElementById('edit-workout-exercises-field').value.trim();
+
+  if (!exercisesText) {
+    showToast('Add at least one exercise');
+    return;
+  }
+
+  // Parse exercises
+  const exercises = [];
+  const lines = exercisesText.split('\n').filter(l => l.trim());
+
+  for (const line of lines) {
+    const match = line.match(/^(.+?):\s*(\d+)\s*[×x]\s*(.+?),\s*(\d+)/i);
+    if (!match) {
+      showToast(`Invalid format in line: ${line}`);
+      return;
+    }
+
+    exercises.push({
+      name: match[1].trim(),
+      sets: parseInt(match[2]),
+      reps: match[3].trim(),
+      rest: parseInt(match[4])
+    });
+  }
+
+  APP_DATA.customWorkouts[originalName] = {
+    type,
+    exercises
+  };
+
+  saveData(APP_DATA);
+  showToast(wasPreset ? 'Workout customized!' : 'Workout updated!');
+  closeModal();
+  renderPage();
+};
+
+window.resetWorkoutToDefault = function(name) {
+  if (!WORKOUTS[name]) return;
+  if (!confirm(`Reset "${name}" to default template?`)) return;
+
+  delete APP_DATA.customWorkouts[name];
+  saveData(APP_DATA);
+  showToast('Workout reset to default');
+  closeModal();
+  renderPage();
+};
 
 window.createCustomWorkout = function() {
   const html = `
