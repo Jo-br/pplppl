@@ -631,25 +631,80 @@ window.changeWeek = function(delta) {
 
 function getStreak() {
   const sorted = [...APP_DATA.sessions].sort((a, b) => b.date.localeCompare(a.date));
-  if (sorted.length === 0) return 0;
+  if (sorted.length === 0) return { current: 0, longest: 0 };
 
-  let streak = 0;
+  let currentStreak = 0;
+  let longestStreak = 0;
+  let tempStreak = 0;
   let checkDate = new Date(todayStr() + 'T00:00:00');
 
-  for (let i = 0; i < 14; i++) {
+  // Calculate current streak
+  for (let i = 0; i < 30; i++) {
     const dateStr = checkDate.toISOString().slice(0, 10);
     if (sorted.some(s => s.date === dateStr)) {
-      streak++;
-    } else if (streak > 0) {
-      // Allow rest days — check if gap > 2 days
-      const nextDate = new Date(checkDate);
-      nextDate.setDate(nextDate.getDate() - 1);
-      const nextStr = nextDate.toISOString().slice(0, 10);
-      if (!sorted.some(s => s.date === nextStr)) break;
+      currentStreak++;
+    } else if (currentStreak > 0) {
+      break;
     }
     checkDate.setDate(checkDate.getDate() - 1);
   }
-  return streak || sorted.length;
+
+  // Calculate longest streak
+  const allDates = sorted.map(s => new Date(s.date + 'T00:00:00')).sort((a, b) => a - b);
+  for (let i = 0; i < allDates.length; i++) {
+    tempStreak = 1;
+    for (let j = i + 1; j < allDates.length; j++) {
+      const daysDiff = Math.round((allDates[j] - allDates[j - 1]) / 86400000);
+      if (daysDiff <= 2) {
+        tempStreak++;
+      } else {
+        break;
+      }
+    }
+    longestStreak = Math.max(longestStreak, tempStreak);
+  }
+
+  return { current: currentStreak || sorted.length, longest: longestStreak };
+}
+
+function getMilestones() {
+  const sessions = APP_DATA.sessions;
+  const totalSessions = sessions.length;
+  const totalVolume = sessions.reduce((sum, s) =>
+    sum + s.exercises.reduce((exSum, ex) =>
+      exSum + ex.workingSets.reduce((setSum, set) => setSum + set.w * set.r, 0), 0), 0);
+
+  const milestones = [];
+
+  // Session milestones
+  const sessionMilestones = [10, 25, 50, 100, 250, 500];
+  for (const m of sessionMilestones) {
+    if (totalSessions >= m) {
+      milestones.push({ icon: '🏆', text: `${m} Sessions`, achieved: true });
+    }
+  }
+
+  // Volume milestones (in tons)
+  const volumeTons = Math.floor(totalVolume / 1000);
+  const volumeMilestones = [10, 25, 50, 100, 250, 500];
+  for (const m of volumeMilestones) {
+    if (volumeTons >= m) {
+      milestones.push({ icon: '💪', text: `${m} Tons`, achieved: true });
+    }
+  }
+
+  // Find next milestone
+  let nextMilestone = null;
+  const nextSession = sessionMilestones.find(m => m > totalSessions);
+  const nextVolume = volumeMilestones.find(m => m > volumeTons);
+
+  if (nextSession) {
+    nextMilestone = { type: 'sessions', value: nextSession, current: totalSessions };
+  } else if (nextVolume) {
+    nextMilestone = { type: 'volume', value: nextVolume, current: volumeTons };
+  }
+
+  return { achieved: milestones, next: nextMilestone };
 }
 
 function getWeeksTraining() {
@@ -853,8 +908,9 @@ function renderDashboard() {
       <div class="stat-label">Sessions</div>
     </div>
     <div class="stat-block">
-      <div class="stat-value">${streak}</div>
+      <div class="stat-value">${streak.current}</div>
       <div class="stat-label">Day Streak</div>
+      ${streak.longest > streak.current ? `<div class="text-xs text-secondary mt-4">Best: ${streak.longest}</div>` : ''}
     </div>
     <div class="stat-block">
       <div class="stat-value">${weeksTraining}</div>
@@ -865,6 +921,22 @@ function renderDashboard() {
       <div class="stat-label">Weight (kg)</div>
     </div>
   </div>`;
+
+  // Milestones
+  const milestones = getMilestones();
+  if (milestones.achieved.length > 0) {
+    html += `<div class="card mb-16 animate-in">
+      <div class="card-title mb-8">Achievements</div>
+      <div class="milestones-grid">
+        ${milestones.achieved.slice(-6).reverse().map(m => `<div class="milestone-badge">${m.icon} ${m.text}</div>`).join('')}
+      </div>
+      ${milestones.next ? `
+        <div class="text-xs text-secondary mt-12">
+          Next: ${milestones.next.type === 'sessions' ? `${milestones.next.value} Sessions (${milestones.next.current}/${milestones.next.value})` : `${milestones.next.value} Tons (${milestones.next.current}/${milestones.next.value})`}
+        </div>
+      ` : ''}
+    </div>`;
+  }
 
   // Bodyweight mini chart
   if (APP_DATA.bodyweight.length > 1) {
