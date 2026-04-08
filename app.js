@@ -153,9 +153,9 @@ function getDefaultData() {
     sessions: [],
     bodyweight: [{ date: '2026-04-06', weight: 91 }],
     settings: {
-      peptideStartDate: '2026-03-01',
       height: 185,
       cycleStartDate: '2026-03-23',
+      currentWeek: 1,
     }
   };
 }
@@ -564,6 +564,10 @@ function getCurrentWeekStart() {
 // ---- Cycle Tracking ----
 
 function getCycleWeek() {
+  // Allow manual override, otherwise calculate from start date
+  if (APP_DATA.settings.currentWeek) {
+    return APP_DATA.settings.currentWeek;
+  }
   const start = APP_DATA.settings.cycleStartDate || '2026-03-23';
   const days = daysBetween(start, todayStr());
   if (days < 0) return 1;
@@ -571,13 +575,16 @@ function getCycleWeek() {
   return week;
 }
 
-function getPeptideDay() {
-  const start = APP_DATA.settings.peptideStartDate;
-  if (!start) return null;
-  const days = daysBetween(start, todayStr()) + 1;
-  if (days < 1 || days > 90) return null;
-  return days;
-}
+window.changeWeek = function(delta) {
+  let current = getCycleWeek();
+  let newWeek = current + delta;
+  if (newWeek < 1) newWeek = 4;
+  if (newWeek > 4) newWeek = 1;
+  APP_DATA.settings.currentWeek = newWeek;
+  saveData(APP_DATA);
+  renderPage();
+  showToast(`Week ${newWeek}${newWeek === 4 ? ' (Deload)' : ''}`);
+};
 
 // ---- Streak Calculation ----
 
@@ -689,6 +696,8 @@ function renderPage() {
     case 'settings': content.innerHTML = renderSettings(); break;
     case 'session': content.innerHTML = renderSessionDetail(window._pageParams); break;
     case 'recommendations': content.innerHTML = renderRecommendations(window._pageParams); break;
+    case 'workout-select': content.innerHTML = renderWorkoutSelect(); break;
+    case 'workout-live': content.innerHTML = renderWorkoutLive(); initWorkoutLive(); break;
     default: content.innerHTML = renderDashboard(); break;
   }
 }
@@ -697,7 +706,6 @@ function renderPage() {
 
 function renderDashboard() {
   const cycleWeek = getCycleWeek();
-  const peptideDay = getPeptideDay();
   const sessions = APP_DATA.sessions;
   const sorted = [...sessions].sort((a, b) => b.date.localeCompare(a.date));
   const last3 = sorted.slice(0, 3);
@@ -710,30 +718,18 @@ function renderDashboard() {
   html += `<div class="card mb-16">
     <div class="card-header">
       <span class="card-title">Training Cycle</span>
-      <span class="card-badge ${cycleWeek === 4 ? 'badge-deload' : 'badge-strength'}">
-        Week ${cycleWeek}${cycleWeek === 4 ? ' — Deload' : ''}
-      </span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-sm btn-secondary" onclick="changeWeek(-1)" style="padding:6px 12px;min-height:32px">←</button>
+        <span class="card-badge ${cycleWeek === 4 ? 'badge-deload' : 'badge-strength'}">
+          Week ${cycleWeek}${cycleWeek === 4 ? ' — Deload' : ''}
+        </span>
+        <button class="btn btn-sm btn-secondary" onclick="changeWeek(1)" style="padding:6px 12px;min-height:32px">→</button>
+      </div>
     </div>
     <div class="week-dots">
       ${[1,2,3,4].map(w => `<div class="week-dot ${w <= cycleWeek ? 'active' : ''} ${w === 4 && cycleWeek === 4 ? 'deload' : ''}"></div>`).join('')}
     </div>
   </div>`;
-
-  // Peptide tracker
-  if (peptideDay) {
-    const pct = Math.round((peptideDay / 90) * 100);
-    html += `<div class="card mb-16">
-      <div class="card-header">
-        <span class="card-title">Peptide Cycle</span>
-        <span class="text-sm text-secondary">Day ${peptideDay} of 90</span>
-      </div>
-      <div class="cycle-bar">
-        <div class="cycle-bar-track">
-          <div class="cycle-bar-fill fill-green" style="width: ${pct}%"></div>
-        </div>
-      </div>
-    </div>`;
-  }
 
   // Stats
   html += `<div class="stats-grid animate-in">
@@ -785,9 +781,10 @@ function renderDashboard() {
     }
   }
 
-  // Quick link to log
-  html += `<div class="mt-24 animate-in">
-    <button class="btn btn-primary btn-block" onclick="navigate('log')">Log Workout</button>
+  // Quick action buttons
+  html += `<div class="mt-24 animate-in btn-group">
+    <button class="btn btn-primary" style="flex:1" onclick="navigate('workout-select')">Start Workout</button>
+    <button class="btn btn-secondary" style="flex:1" onclick="navigate('log')">Log Past Workout</button>
   </div>`;
 
   html += `</div>`;
@@ -1360,12 +1357,17 @@ function renderSettings() {
     <div class="settings-section">
       <h3>Cycle</h3>
       <div class="setting-row">
-        <label>Cycle Start Date</label>
-        <input type="date" id="set-cycle-start" value="${s.cycleStartDate || ''}" onchange="saveSetting('cycleStartDate', this.value)">
+        <label>Current Week</label>
+        <select id="set-current-week" onchange="saveSetting('currentWeek', parseInt(this.value))">
+          <option value="1" ${(s.currentWeek || 1) === 1 ? 'selected' : ''}>Week 1</option>
+          <option value="2" ${s.currentWeek === 2 ? 'selected' : ''}>Week 2</option>
+          <option value="3" ${s.currentWeek === 3 ? 'selected' : ''}>Week 3</option>
+          <option value="4" ${s.currentWeek === 4 ? 'selected' : ''}>Week 4 (Deload)</option>
+        </select>
       </div>
       <div class="setting-row">
-        <label>Peptide Start Date</label>
-        <input type="date" id="set-peptide-start" value="${s.peptideStartDate || ''}" onchange="saveSetting('peptideStartDate', this.value)">
+        <label>Cycle Start Date</label>
+        <input type="date" id="set-cycle-start" value="${s.cycleStartDate || ''}" onchange="saveSetting('cycleStartDate', this.value)">
       </div>
     </div>
 
@@ -1507,6 +1509,285 @@ function renderAllSessions() {
   html += `</div>`;
   return html;
 }
+
+// ---- Live Workout ----
+
+let liveWorkout = null;
+let workoutTimer = null;
+let restTimer = null;
+
+function renderWorkoutSelect() {
+  let html = `<div class="animate-in">
+    <h2>Start Workout</h2>
+    <p class="text-sm text-secondary mb-16">Select your workout type</p>`;
+
+  for (const [name, workout] of Object.entries(WORKOUTS)) {
+    const badgeClass = workout.type === 'Strength' ? 'badge-strength' : 'badge-hypertrophy';
+    html += `<div class="card session-card mb-12 animate-in" onclick="startLiveWorkout('${name}')">
+      <div class="card-header">
+        <span class="card-title">${name}</span>
+        <span class="card-badge ${badgeClass}">${workout.type}</span>
+      </div>
+      <div class="text-sm text-secondary">
+        ${workout.exercises.map(e => `${e.name} ${e.sets}×${e.reps}`).join(' · ')}
+      </div>
+    </div>`;
+  }
+
+  html += `<button class="btn btn-secondary btn-block mt-16" onclick="navigate('dashboard')">Cancel</button>
+  </div>`;
+  return html;
+}
+
+window.startLiveWorkout = function(workoutType) {
+  const template = WORKOUTS[workoutType];
+  if (!template) return;
+
+  liveWorkout = {
+    workoutType,
+    startTime: new Date(),
+    exercises: template.exercises.map(e => ({
+      name: e.name,
+      targetSets: e.sets,
+      targetReps: e.reps,
+      restTime: e.rest,
+      completedSets: []
+    })),
+    currentExerciseIndex: 0,
+    currentSetIndex: 0,
+    isResting: false,
+    restRemaining: 0
+  };
+
+  navigate('workout-live');
+};
+
+function renderWorkoutLive() {
+  if (!liveWorkout) {
+    return `<div class="empty-state">
+      <h3>No active workout</h3>
+      <button class="btn btn-primary mt-16" onclick="navigate('workout-select')">Start Workout</button>
+    </div>`;
+  }
+
+  const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
+  const progress = `${liveWorkout.currentExerciseIndex + 1}/${liveWorkout.exercises.length}`;
+  const setProgress = `${ex.completedSets.length}/${ex.targetSets}`;
+
+  let html = `<div class="animate-in live-workout">
+    <div class="card mb-16">
+      <div class="card-header">
+        <span class="card-title">${liveWorkout.workoutType}</span>
+        <span class="text-sm text-secondary">Exercise ${progress}</span>
+      </div>
+      <div class="live-timer" id="workout-timer">00:00</div>
+    </div>
+
+    <div class="card mb-16">
+      <h3 class="mb-8">${ex.name}</h3>
+      <div class="text-sm text-secondary mb-12">Target: ${ex.targetSets} sets × ${ex.targetReps} reps · Rest: ${ex.restTime}s</div>
+      <div class="text-sm mb-12">Completed: ${setProgress} sets</div>
+
+      <div id="rest-timer-container" class="rest-timer-container hidden">
+        <div class="rest-timer-label">Rest</div>
+        <div class="rest-timer-value" id="rest-timer-value">0:00</div>
+        <button class="btn btn-sm btn-secondary mt-8" onclick="skipRest()">Skip Rest</button>
+      </div>
+
+      <div id="set-input-container">
+        <div class="set-input-row">
+          <div style="flex:1">
+            <label>Reps</label>
+            <input type="number" id="live-reps" value="${ex.targetReps.split('-')[0]}" min="1" style="font-size:1.2rem;text-align:center">
+          </div>
+          <div style="flex:1">
+            <label>Weight (kg)</label>
+            <input type="number" id="live-weight" value="0" step="2.5" min="0" style="font-size:1.2rem;text-align:center">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block mt-12" onclick="logLiveSet()">Log Set</button>
+      </div>
+
+      ${ex.completedSets.length > 0 ? `
+        <div class="mt-16">
+          <div class="text-sm text-secondary mb-8">Completed Sets:</div>
+          <div class="exercise-sets">
+            ${ex.completedSets.map(s => `<span class="set-tag">${s.r} × ${s.w} kg</span>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-secondary" onclick="previousExercise()">← Previous</button>
+      <button class="btn btn-secondary" onclick="nextExercise()">Next →</button>
+    </div>
+    <div class="mt-12">
+      <button class="btn btn-primary btn-block" onclick="finishWorkout()">Finish Workout</button>
+    </div>
+    <div class="mt-12 text-center">
+      <span class="delete-link" onclick="cancelWorkout()">Cancel Workout</span>
+    </div>
+  </div>`;
+
+  return html;
+}
+
+function initWorkoutLive() {
+  if (!liveWorkout) return;
+
+  // Start workout timer
+  if (workoutTimer) clearInterval(workoutTimer);
+  workoutTimer = setInterval(() => {
+    const elapsed = Math.floor((new Date() - liveWorkout.startTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timerEl = document.getElementById('workout-timer');
+    if (timerEl) {
+      timerEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+  }, 1000);
+
+  // Check if we should auto-focus weight input
+  const weightInput = document.getElementById('live-weight');
+  if (weightInput) {
+    // Pre-fill weight from last session
+    const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
+    const lastSession = [...APP_DATA.sessions]
+      .filter(s => s.workoutType === liveWorkout.workoutType)
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+
+    if (lastSession) {
+      const lastEx = lastSession.exercises.find(e => e.name === ex.name);
+      if (lastEx && lastEx.workingSets.length > 0) {
+        weightInput.value = lastEx.workingSets[0].w;
+      }
+    }
+  }
+}
+
+window.logLiveSet = function() {
+  if (!liveWorkout) return;
+
+  const reps = parseInt(document.getElementById('live-reps').value);
+  const weight = parseFloat(document.getElementById('live-weight').value);
+
+  if (!reps || reps < 1) {
+    showToast('Enter reps');
+    return;
+  }
+
+  const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
+  ex.completedSets.push({ r: reps, w: weight });
+
+  // Start rest timer
+  if (ex.completedSets.length < ex.targetSets) {
+    startRestTimer(ex.restTime);
+  }
+
+  renderPage();
+};
+
+function startRestTimer(seconds) {
+  liveWorkout.isResting = true;
+  liveWorkout.restRemaining = seconds;
+
+  const container = document.getElementById('rest-timer-container');
+  const inputContainer = document.getElementById('set-input-container');
+  if (container) container.classList.remove('hidden');
+  if (inputContainer) inputContainer.classList.add('hidden');
+
+  if (restTimer) clearInterval(restTimer);
+  restTimer = setInterval(() => {
+    liveWorkout.restRemaining--;
+    const mins = Math.floor(liveWorkout.restRemaining / 60);
+    const secs = liveWorkout.restRemaining % 60;
+    const timerEl = document.getElementById('rest-timer-value');
+    if (timerEl) {
+      timerEl.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+    }
+
+    if (liveWorkout.restRemaining <= 0) {
+      skipRest();
+    }
+  }, 1000);
+}
+
+window.skipRest = function() {
+  if (restTimer) clearInterval(restTimer);
+  liveWorkout.isResting = false;
+  liveWorkout.restRemaining = 0;
+
+  const container = document.getElementById('rest-timer-container');
+  const inputContainer = document.getElementById('set-input-container');
+  if (container) container.classList.add('hidden');
+  if (inputContainer) inputContainer.classList.remove('hidden');
+};
+
+window.nextExercise = function() {
+  if (!liveWorkout) return;
+  if (liveWorkout.currentExerciseIndex < liveWorkout.exercises.length - 1) {
+    liveWorkout.currentExerciseIndex++;
+    if (restTimer) clearInterval(restTimer);
+    liveWorkout.isResting = false;
+    renderPage();
+  }
+};
+
+window.previousExercise = function() {
+  if (!liveWorkout) return;
+  if (liveWorkout.currentExerciseIndex > 0) {
+    liveWorkout.currentExerciseIndex--;
+    if (restTimer) clearInterval(restTimer);
+    liveWorkout.isResting = false;
+    renderPage();
+  }
+};
+
+window.finishWorkout = function() {
+  if (!liveWorkout) return;
+
+  const endTime = new Date();
+  const duration = Math.floor((endTime - liveWorkout.startTime) / 60000); // minutes
+
+  // Build session object
+  const session = {
+    id: generateId(),
+    date: todayStr(),
+    timeStart: liveWorkout.startTime.toTimeString().slice(0, 5),
+    timeEnd: endTime.toTimeString().slice(0, 5),
+    workoutType: liveWorkout.workoutType,
+    exercises: liveWorkout.exercises
+      .filter(e => e.completedSets.length > 0)
+      .map(e => ({
+        name: e.name,
+        allSets: e.completedSets,
+        workingSets: e.completedSets
+      })),
+    notes: ''
+  };
+
+  APP_DATA.sessions.push(session);
+  saveData(APP_DATA);
+
+  // Clean up
+  if (workoutTimer) clearInterval(workoutTimer);
+  if (restTimer) clearInterval(restTimer);
+  liveWorkout = null;
+
+  showToast('Workout saved!');
+  navigate('session', session.id);
+};
+
+window.cancelWorkout = function() {
+  if (!confirm('Cancel this workout? Your progress will be lost.')) return;
+
+  if (workoutTimer) clearInterval(workoutTimer);
+  if (restTimer) clearInterval(restTimer);
+  liveWorkout = null;
+
+  navigate('dashboard');
+};
 
 // ---- Initialize ----
 

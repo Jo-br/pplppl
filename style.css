@@ -964,3 +964,61 @@ label {
 }
 
 .delete-link:hover { opacity: 1; }
+
+/* ---- Live Workout ---- */
+
+.live-workout {
+  padding-bottom: 20px;
+}
+
+.live-timer {
+  font-family: var(--font-serif);
+  font-size: 3rem;
+  font-weight: 700;
+  text-align: center;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rest-timer-container {
+  text-align: center;
+  padding: 24px;
+  background: var(--amber-bg);
+  border: 2px solid var(--amber);
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+
+.rest-timer-container.hidden {
+  display: none;
+}
+
+.rest-timer-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.rest-timer-value {
+  font-family: var(--font-serif);
+  font-size: 3.5rem;
+  font-weight: 700;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+
+.set-input-row {
+  display: flex;
+  gap: 12px;
+}
+
+.set-input-row input {
+  font-weight: 600;
+}
+
+#set-input-container.hidden {
+  display: none;
+}
