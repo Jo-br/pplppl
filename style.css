@@ -1292,3 +1292,160 @@ label {
   border: 2px solid rgba(0,0,0,0.1);
   padding: 0 6px;
 }
+
+/* ---- StrongLifts-style Workout View ---- */
+
+.exercise-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.exercise-header:hover {
+  background: var(--accent-light);
+}
+
+.exercise-header-actions {
+  font-size: 1.5rem;
+  color: var(--green);
+}
+
+.exercise-details {
+  padding: 16px;
+  display: none;
+}
+
+.exercise-details.expanded {
+  display: block;
+}
+
+.exercise-complete {
+  opacity: 0.7;
+}
+
+.exercise-complete .exercise-header {
+  background: var(--green-bg);
+}
+
+.sets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.set-button {
+  padding: 12px;
+  background: var(--card-bg);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 70px;
+  font-family: var(--font-sans);
+}
+
+.set-button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+
+.set-number {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--accent-light);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.set-data {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.set-rir {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.set-complete {
+  background: var(--green-bg);
+  border-color: var(--green);
+}
+
+.set-complete .set-data {
+  color: var(--green);
+}
+
+.set-next {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  border-width: 2px;
+}
+
+.set-next .set-data {
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+.set-pending {
+  opacity: 0.5;
+}
+
+.set-pending:hover {
+  opacity: 1;
+}
+
+/* Rest Timer Banner */
+
+.rest-timer-banner {
+  position: sticky;
+  top: var(--top-bar-height);
+  z-index: 50;
+  background: var(--amber);
+  color: white;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow-lg);
+  margin: -16px -16px 16px -16px;
+}
+
+.rest-timer-banner .rest-timer-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rest-timer-banner .rest-timer-value {
+  font-size: 2rem;
+  font-weight: 700;
+  font-family: var(--font-serif);
+}
+
+.warmup-inline {
+  padding: 8px 12px;
+  background: var(--accent-light);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--amber);
+}
+
+.text-success {
+  color: var(--green);
+}

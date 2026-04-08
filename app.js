@@ -570,6 +570,7 @@ function getRecommendation(exercise, workoutType) {
 function calculateWarmup(exerciseName, workingWeight) {
   const bar = 20;
   const sets = [];
+  const isDumbbell = exerciseName.startsWith('DB ') || exerciseName.includes('Dumbbell');
 
   if (COMPOUND_HEAVY.includes(exerciseName)) {
     sets.push({ label: 'Bar', weight: bar, reps: 10 });
@@ -578,12 +579,17 @@ function calculateWarmup(exerciseName, workingWeight) {
     sets.push({ label: '~92%', weight: roundTo2_5(workingWeight * 0.92), reps: 2 });
     sets.push({ label: 'Working', weight: workingWeight, reps: null });
   } else if (COMPOUND_MODERATE.includes(exerciseName)) {
-    sets.push({ label: 'Bar', weight: bar, reps: 8 });
-    sets.push({ label: '~68%', weight: roundTo2_5(workingWeight * 0.68), reps: 5 });
-    sets.push({ label: '~88%', weight: roundTo2_5(workingWeight * 0.88), reps: 3 });
+    if (!isDumbbell) {
+      sets.push({ label: 'Bar', weight: bar, reps: 8 });
+    }
+    sets.push({ label: '~50%', weight: roundTo2_5(workingWeight * 0.50), reps: 8 });
+    sets.push({ label: '~75%', weight: roundTo2_5(workingWeight * 0.75), reps: 5 });
     sets.push({ label: 'Working', weight: workingWeight, reps: null });
   } else if (ACCESSORY.includes(exerciseName)) {
-    sets.push({ label: '~65%', weight: roundTo2_5(workingWeight * 0.65), reps: 8 });
+    // Only one light warmup for accessories
+    if (workingWeight > 20) {
+      sets.push({ label: '~50%', weight: roundTo2_5(workingWeight * 0.50), reps: 8 });
+    }
     sets.push({ label: 'Working', weight: workingWeight, reps: null });
   } else {
     // Isolation — no warmup needed
@@ -591,9 +597,10 @@ function calculateWarmup(exerciseName, workingWeight) {
   }
 
   // Remove duplicates where warmup weight equals or exceeds working weight
+  const minWeight = isDumbbell ? 2.5 : bar;
   return sets.filter((s, i) => {
     if (s.label === 'Working') return true;
-    return s.weight < workingWeight && s.weight >= bar;
+    return s.weight < workingWeight && s.weight >= minWeight;
   });
 }
 
@@ -2161,8 +2168,7 @@ window.startLiveWorkout = function(workoutType, repeatLast = false) {
         targetReps: e.reps,
         restTime: e.rest,
         completedSets: [],
-        lastWeights: null,
-        supersetWithNext: false
+        lastWeights: null
       };
 
       // Pre-fill last weights if repeating
@@ -2175,8 +2181,6 @@ window.startLiveWorkout = function(workoutType, repeatLast = false) {
 
       return ex;
     }),
-    currentExerciseIndex: 0,
-    currentSetIndex: 0,
     isResting: false,
     restRemaining: 0,
     repeatLast
@@ -2193,142 +2197,106 @@ function renderWorkoutLive() {
     </div>`;
   }
 
-  const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
-  const progress = `${liveWorkout.currentExerciseIndex + 1}/${liveWorkout.exercises.length}`;
-  const currentSet = ex.completedSets.length + 1;
-
-  // Get recommended weight for next set
-  let recommendedWeight = 0;
-  if (ex.lastWeights && ex.lastWeights.length > 0) {
-    const setIndex = ex.completedSets.length;
-    recommendedWeight = setIndex < ex.lastWeights.length
-      ? ex.lastWeights[setIndex].w
-      : ex.lastWeights[ex.lastWeights.length - 1].w;
-  }
-
-  // Calculate warmup sets
-  const warmupSets = calculateWarmup(ex.name, recommendedWeight || 100);
-  const workingSets = warmupSets.filter(s => s.label === 'Working');
-  const actualWarmups = warmupSets.filter(s => s.label !== 'Working');
+  // Calculate total sets completed
+  const totalSets = liveWorkout.exercises.reduce((sum, ex) => sum + ex.completedSets.length, 0);
+  const targetSets = liveWorkout.exercises.reduce((sum, ex) => sum + ex.targetSets, 0);
 
   let html = `<div class="animate-in live-workout">
     <div class="card mb-16">
       <div class="card-header">
         <span class="card-title">${liveWorkout.workoutType}</span>
-        <span class="text-sm text-secondary">Exercise ${progress}</span>
+        <span class="text-sm text-secondary">${totalSets}/${targetSets} sets</span>
       </div>
     </div>
 
-    <div class="card mb-16">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h2 class="mb-0">${ex.name}</h2>
-        <div style="display:flex;gap:6px">
-          ${EXERCISE_SUBSTITUTIONS[ex.name] ? `<button class="btn btn-sm btn-secondary" onclick="substituteExercise()" style="padding:4px 8px;min-height:28px;font-size:0.7rem">Swap</button>` : ''}
-          <button class="btn btn-sm btn-secondary" onclick="openExerciseNotes('${ex.name}')" style="padding:4px 8px;min-height:28px;font-size:0.7rem">Notes</button>
-        </div>
-      </div>
+    <!-- Rest Timer (shown when resting) -->
+    <div id="rest-timer-banner" class="rest-timer-banner hidden">
+      <div class="rest-timer-label">Rest</div>
+      <div class="rest-timer-value" id="rest-timer-value">0:00</div>
+      <button class="btn btn-sm btn-secondary" onclick="skipRest()">Skip</button>
+    </div>
 
-      ${APP_DATA.exerciseNotes && APP_DATA.exerciseNotes[ex.name] ? `
-        <div class="exercise-note-display mb-12">
-          📝 ${APP_DATA.exerciseNotes[ex.name]}
-        </div>
-      ` : ''}
+    <!-- All Exercises -->
+    ${liveWorkout.exercises.map((ex, exIndex) => {
+      const nextSetIndex = ex.completedSets.length;
+      const allComplete = ex.completedSets.length >= ex.targetSets;
 
-      <!-- Warmup Sets -->
-      ${actualWarmups.length > 0 && ex.completedSets.length === 0 ? `
-        <div class="warmup-section mb-16">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div class="text-sm font-weight-600">Warmup Sets</div>
-            <div class="text-xs text-secondary">Do these - don't log</div>
-          </div>
-          <div class="text-xs mb-8" style="color:var(--text-secondary);font-style:italic">
-            ℹ️ Perform these warmup sets first, then use "Log Set" below for your working sets
-          </div>
-          ${actualWarmups.map(s => `
-            <div class="warmup-set-item">
-              <span class="warmup-set-label">${s.label}</span>
-              <span class="warmup-set-value">${s.reps} × ${s.weight}kg</span>
+      // Get last weights for this exercise
+      let lastWeightsDisplay = '';
+      if (liveWorkout.repeatLast && ex.lastWeights && ex.lastWeights.length > 0 && ex.completedSets.length === 0) {
+        lastWeightsDisplay = `<div class="text-xs text-secondary mb-8">Last: ${ex.lastWeights.map(s => `${s.r}×${s.w}kg`).join(', ')}</div>`;
+      }
+
+      // Calculate warmup for first set
+      let warmupDisplay = '';
+      if (ex.completedSets.length === 0) {
+        const recommendedWeight = ex.lastWeights && ex.lastWeights.length > 0
+          ? ex.lastWeights[0].w
+          : 100;
+        const warmupSets = calculateWarmup(ex.name, recommendedWeight);
+        const actualWarmups = warmupSets.filter(s => s.label !== 'Working');
+
+        if (actualWarmups.length > 0) {
+          warmupDisplay = `
+            <div class="warmup-inline mb-8">
+              <div class="text-xs text-secondary mb-4">Warmup: ${actualWarmups.map(s => `${s.reps}×${s.weight}kg`).join(', ')}</div>
             </div>
-          `).join('')}
-        </div>
-      ` : ''}
+          `;
+        }
+      }
 
-      <!-- Set Progress -->
-      <div class="set-progress-header mb-12">
-        <span class="text-lg" style="font-weight:700">Set ${currentSet} of ${ex.targetSets}</span>
-        <span class="text-sm text-secondary">${ex.targetReps} reps · ${ex.restTime}s rest</span>
-      </div>
+      return `
+        <div class="card mb-12 ${allComplete ? 'exercise-complete' : ''}">
+          <div class="exercise-header" onclick="toggleExerciseDetails(${exIndex})">
+            <div>
+              <div class="font-weight-600">${ex.name}</div>
+              <div class="text-xs text-secondary">${ex.targetSets} × ${ex.targetReps}${ex.completedSets.length > 0 ? ` • ${ex.completedSets.length}/${ex.targetSets} done` : ''}</div>
+            </div>
+            <div class="exercise-header-actions">
+              ${allComplete ? '<span class="text-success">✓</span>' : ''}
+            </div>
+          </div>
 
-      <!-- Completed Sets History -->
-      ${ex.completedSets.length > 0 ? `
-        <div class="mb-16">
-          <div class="text-xs text-secondary mb-6">Completed:</div>
-          <div class="set-history">
-            ${ex.completedSets.map((s, i) => `
-              <div class="set-history-item" onclick="editLiveSet(${liveWorkout.currentExerciseIndex}, ${i})">
-                <span class="set-history-number">${i + 1}</span>
-                <span class="set-history-value">${s.r} × ${s.w}kg${s.rir !== undefined ? ` @${s.rir}` : ''}</span>
+          <div class="exercise-details" id="exercise-details-${exIndex}">
+            ${APP_DATA.exerciseNotes && APP_DATA.exerciseNotes[ex.name] ? `
+              <div class="exercise-note-display mb-12">
+                📝 ${APP_DATA.exerciseNotes[ex.name]}
               </div>
-            `).join('')}
+            ` : ''}
+
+            ${lastWeightsDisplay}
+            ${warmupDisplay}
+
+            <!-- Sets Grid -->
+            <div class="sets-grid">
+              ${Array.from({length: ex.targetSets}, (_, setIdx) => {
+                const completedSet = ex.completedSets[setIdx];
+                const isNext = setIdx === nextSetIndex && !allComplete;
+
+                if (completedSet) {
+                  return `
+                    <button class="set-button set-complete" onclick="editSet(${exIndex}, ${setIdx})">
+                      <div class="set-number">${setIdx + 1}</div>
+                      <div class="set-data">${completedSet.r} × ${completedSet.w}kg</div>
+                      ${completedSet.rir !== undefined ? `<div class="set-rir">RIR ${completedSet.rir}</div>` : ''}
+                    </button>
+                  `;
+                } else {
+                  return `
+                    <button class="set-button ${isNext ? 'set-next' : 'set-pending'}" onclick="logSetForExercise(${exIndex}, ${setIdx})">
+                      <div class="set-number">${setIdx + 1}</div>
+                      <div class="set-data">${isNext ? 'Tap to log' : '—'}</div>
+                    </button>
+                  `;
+                }
+              }).join('')}
+            </div>
           </div>
         </div>
-      ` : ''}
+      `;
+    }).join('')}
 
-      ${liveWorkout.repeatLast && ex.lastWeights && ex.lastWeights.length > 0 ? `
-        <div class="text-xs mb-12" style="padding:8px;background:var(--accent-light);border-radius:6px">
-          <strong>Last time:</strong> ${ex.lastWeights.map(s => `${s.r}×${s.w}kg`).join(', ')}
-        </div>
-      ` : ''}
-
-      <div id="rest-timer-container" class="rest-timer-container hidden">
-        <div class="rest-timer-label">Rest</div>
-        <div class="rest-timer-value" id="rest-timer-value">0:00</div>
-        <button class="btn btn-sm btn-secondary mt-8" onclick="skipRest()">Skip Rest</button>
-      </div>
-
-      <div id="set-input-container">
-        <div class="set-input-row">
-          <div style="flex:1">
-            <label>Reps</label>
-            <input type="number" id="live-reps" value="${ex.targetReps.split('-')[0]}" min="1" style="font-size:1.2rem;text-align:center">
-          </div>
-          <div style="flex:1">
-            <label>Weight (kg)</label>
-            <input type="number" id="live-weight" value="0" step="2.5" min="0" style="font-size:1.2rem;text-align:center" oninput="updatePlateCalculator()">
-          </div>
-        </div>
-        <div class="set-input-row mt-8">
-          <div style="flex:1">
-            <label>RIR (optional)</label>
-            <select id="live-rir" style="font-size:1rem;text-align:center">
-              <option value="">—</option>
-              <option value="0">0 (Failure)</option>
-              <option value="1">1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4+</option>
-            </select>
-          </div>
-        </div>
-        <div id="plate-display" class="plate-display"></div>
-        <button class="btn btn-primary btn-block mt-12" onclick="logLiveSet()">Log Set</button>
-      </div>
-    </div>
-
-    ${liveWorkout.currentExerciseIndex < liveWorkout.exercises.length - 1 ? `
-      <div class="mt-12 text-center">
-        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="superset-toggle" ${ex.supersetWithNext ? 'checked' : ''} onchange="toggleSuperset()" style="width:18px;height:18px">
-          <span class="text-sm">Superset with next exercise (skip rest)</span>
-        </label>
-      </div>
-    ` : ''}
-
-    <div class="btn-group mt-12">
-      <button class="btn btn-secondary" onclick="previousExercise()">← Previous</button>
-      <button class="btn btn-secondary" onclick="nextExercise()">Next →</button>
-    </div>
-    <div class="mt-12">
+    <div class="mt-16">
       <button class="btn btn-primary btn-block" onclick="finishWorkout()">Finish Workout</button>
     </div>
     <div class="mt-12 text-center">
@@ -2342,78 +2310,13 @@ function renderWorkoutLive() {
 function initWorkoutLive() {
   if (!liveWorkout) return;
 
-  // Pre-fill weight input
-  const weightInput = document.getElementById('live-weight');
-  if (weightInput) {
-    const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
-
-    // Use lastWeights if available (from repeat last)
-    if (ex.lastWeights && ex.lastWeights.length > 0) {
-      const setIndex = ex.completedSets.length;
-      if (setIndex < ex.lastWeights.length) {
-        weightInput.value = ex.lastWeights[setIndex].w;
-        const repsInput = document.getElementById('live-reps');
-        if (repsInput) {
-          repsInput.value = ex.lastWeights[setIndex].r;
-        }
-      } else {
-        weightInput.value = ex.lastWeights[ex.lastWeights.length - 1].w;
-      }
-    } else {
-      // Otherwise try to find last session
-      const lastSession = [...APP_DATA.sessions]
-        .filter(s => s.workoutType === liveWorkout.workoutType)
-        .sort((a, b) => b.date.localeCompare(a.date))[0];
-
-      if (lastSession) {
-        const lastEx = lastSession.exercises.find(e => e.name === ex.name);
-        if (lastEx && lastEx.workingSets.length > 0) {
-          weightInput.value = lastEx.workingSets[0].w;
-        }
-      }
+  // Expand all exercise details by default
+  liveWorkout.exercises.forEach((ex, i) => {
+    const details = document.getElementById(`exercise-details-${i}`);
+    if (details) {
+      details.classList.add('expanded');
     }
-
-    // Update plate calculator
-    updatePlateCalculator();
-  }
-
-  // Add swipe gesture support
-  let touchStartX = 0;
-  let touchStartY = 0;
-  let touchEndX = 0;
-  let touchEndY = 0;
-
-  const workoutContainer = document.querySelector('.live-workout');
-  if (workoutContainer) {
-    workoutContainer.addEventListener('touchstart', function(e) {
-      touchStartX = e.changedTouches[0].screenX;
-      touchStartY = e.changedTouches[0].screenY;
-    }, { passive: true });
-
-    workoutContainer.addEventListener('touchend', function(e) {
-      touchEndX = e.changedTouches[0].screenX;
-      touchEndY = e.changedTouches[0].screenY;
-      handleSwipe();
-    }, { passive: true });
-  }
-
-  function handleSwipe() {
-    const diffX = touchEndX - touchStartX;
-    const diffY = touchEndY - touchStartY;
-
-    // Only trigger if horizontal swipe is more prominent than vertical
-    if (Math.abs(diffX) > Math.abs(diffY)) {
-      const minSwipeDistance = 50;
-
-      if (diffX > minSwipeDistance) {
-        // Swipe right - previous exercise
-        previousExercise();
-      } else if (diffX < -minSwipeDistance) {
-        // Swipe left - next exercise
-        nextExercise();
-      }
-    }
-  }
+  });
 }
 
 window.updatePlateCalculator = function() {
@@ -2531,52 +2434,146 @@ window.deleteLiveSet = function(exerciseIndex, setIndex) {
   showToast('Set deleted');
 };
 
-window.logLiveSet = function() {
+// StrongLifts-style functions
+window.toggleExerciseDetails = function(exerciseIndex) {
+  const details = document.getElementById(`exercise-details-${exerciseIndex}`);
+  if (details) {
+    details.classList.toggle('expanded');
+  }
+};
+
+window.editSet = function(exerciseIndex, setIndex) {
+  window.editLiveSet(exerciseIndex, setIndex);
+};
+
+window.logSetForExercise = function(exerciseIndex, setIndex) {
   if (!liveWorkout) return;
 
-  const reps = parseInt(document.getElementById('live-reps').value);
-  const weight = parseFloat(document.getElementById('live-weight').value);
-  const rir = document.getElementById('live-rir')?.value;
+  const ex = liveWorkout.exercises[exerciseIndex];
+
+  // Get recommended weight
+  let recommendedWeight = 0;
+  let recommendedReps = ex.targetReps.split('-')[0];
+
+  if (ex.lastWeights && setIndex < ex.lastWeights.length) {
+    recommendedWeight = ex.lastWeights[setIndex].w;
+    recommendedReps = ex.lastWeights[setIndex].r;
+  } else if (ex.completedSets.length > 0) {
+    const lastSet = ex.completedSets[ex.completedSets.length - 1];
+    recommendedWeight = lastSet.w;
+    recommendedReps = lastSet.r;
+  }
+
+  const html = `
+    <h3 class="mb-12">${ex.name}</h3>
+    <p class="text-sm text-secondary mb-12">Set ${setIndex + 1} of ${ex.targetSets}</p>
+    <div class="mb-12">
+      <label>Reps</label>
+      <input type="number" id="log-reps" value="${recommendedReps}" min="1" style="font-size:1.2rem;text-align:center">
+    </div>
+    <div class="mb-12">
+      <label>Weight (kg)</label>
+      <input type="number" id="log-weight" value="${recommendedWeight}" step="2.5" min="0" style="font-size:1.2rem;text-align:center" oninput="updateModalPlateCalculator()">
+    </div>
+    <div id="modal-plate-display" class="plate-display mb-12"></div>
+    <div class="mb-12">
+      <label>RIR (optional)</label>
+      <select id="log-rir" style="font-size:1rem;text-align:center">
+        <option value="">—</option>
+        <option value="0">0 (Failure)</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4+</option>
+      </select>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="saveLoggedSet(${exerciseIndex})">Log Set</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `;
+
+  openModal(html);
+  setTimeout(() => updateModalPlateCalculator(), 100);
+};
+
+window.saveLoggedSet = function(exerciseIndex) {
+  if (!liveWorkout) return;
+
+  const ex = liveWorkout.exercises[exerciseIndex];
+  const reps = parseInt(document.getElementById('log-reps').value);
+  const weight = parseFloat(document.getElementById('log-weight').value);
+  const rir = document.getElementById('log-rir').value;
 
   if (!reps || reps < 1) {
-    showToast('Enter reps');
+    showToast('Enter valid reps');
     return;
   }
 
-  const ex = liveWorkout.exercises[liveWorkout.currentExerciseIndex];
   const set = { r: reps, w: weight };
   if (rir !== '') {
     set.rir = parseInt(rir);
   }
+
   ex.completedSets.push(set);
 
-  // Check if superset and all sets complete
-  const allSetsComplete = ex.completedSets.length >= ex.targetSets;
-  const isSuperset = ex.supersetWithNext;
+  closeModal();
+  renderPage();
 
-  if (allSetsComplete && isSuperset && liveWorkout.currentExerciseIndex < liveWorkout.exercises.length - 1) {
-    // Auto-advance to next exercise in superset
-    showToast('Superset: Next exercise!');
-    setTimeout(() => {
-      liveWorkout.currentExerciseIndex++;
-      renderPage();
-    }, 500);
-  } else if (!allSetsComplete) {
-    // Start rest timer for next set
+  // Start rest timer if more sets remain
+  if (ex.completedSets.length < ex.targetSets) {
     startRestTimer(ex.restTime);
+  } else {
+    showToast('Exercise complete!');
+  }
+};
+
+window.updateModalPlateCalculator = function() {
+  const weight = parseFloat(document.getElementById('log-weight')?.value || 0);
+  const display = document.getElementById('modal-plate-display');
+  if (!display) return;
+
+  if (weight <= 20) {
+    display.innerHTML = '';
+    return;
   }
 
-  renderPage();
+  const plates = calculatePlates(weight);
+  if (plates.length === 0) {
+    display.innerHTML = '<div class="text-sm text-secondary">Bar only (20kg)</div>';
+    return;
+  }
+
+  const plateColors = {
+    25: '#e53935',
+    20: '#1e88e5',
+    15: '#fdd835',
+    10: '#43a047',
+    5: '#ffffff',
+    2.5: '#000000',
+    1.25: '#9e9e9e'
+  };
+
+  let html = '<div class="plate-calculator">';
+  html += '<div class="text-xs text-secondary mb-4">Per side:</div>';
+  html += '<div class="plates-row">';
+
+  for (const p of plates) {
+    const color = plateColors[p] || '#757575';
+    const textColor = (p === 5 || p === 15) ? '#000' : '#fff';
+    html += `<div class="plate-viz" style="background:${color};color:${textColor}">${p}</div>`;
+  }
+
+  html += '</div></div>';
+  display.innerHTML = html;
 };
 
 function startRestTimer(seconds) {
   liveWorkout.isResting = true;
   liveWorkout.restRemaining = seconds;
 
-  const container = document.getElementById('rest-timer-container');
-  const inputContainer = document.getElementById('set-input-container');
-  if (container) container.classList.remove('hidden');
-  if (inputContainer) inputContainer.classList.add('hidden');
+  const banner = document.getElementById('rest-timer-banner');
+  if (banner) banner.classList.remove('hidden');
 
   if (restTimer) clearInterval(restTimer);
   restTimer = setInterval(() => {
@@ -2599,10 +2596,8 @@ window.skipRest = function() {
   liveWorkout.isResting = false;
   liveWorkout.restRemaining = 0;
 
-  const container = document.getElementById('rest-timer-container');
-  const inputContainer = document.getElementById('set-input-container');
-  if (container) container.classList.add('hidden');
-  if (inputContainer) inputContainer.classList.remove('hidden');
+  const banner = document.getElementById('rest-timer-banner');
+  if (banner) banner.classList.add('hidden');
 };
 
 window.toggleSuperset = function() {
