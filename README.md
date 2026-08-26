@@ -13,6 +13,28 @@ A clean, minimal powerbuilding program tracker. Fully client-side — no login, 
 - **Next Session Recommendations** — Weight progression advice based on rep range targets
 - **Data Backup** — Export/import JSON, fully offline
 
+## Smart Gym Coach skill
+
+This repo also ships a Claude Code skill at `.claude/skills/smart-gym-coach/`,
+which Claude Code auto-loads for any session — web, mobile, or desktop —
+opened against this repo. It's an AI coach for a smart cable gym machine:
+designing workouts tailored to muscle readiness and physical constraints,
+and reviewing completed sessions to flag PRs, technique limiters, and new
+exercise discoveries.
+
+Before your first real session, fill in `.claude/skills/smart-gym-coach/references/profile-template.md`
+with your own biometrics, strength references, and physical constraints (or
+just paste them into the conversation). The skill was designed around Notion
+for cross-session memory — see `references/notion-reference.md` and
+`references/notion-workflow.md` — but the coaching logic itself (progression
+gates, discovery tracking, safety rules) also works without it.
+
+Try it: `design a workout for today`, or upload a session export and say
+`review my session`.
+
+Ported from [ANPC86/claude-smart-gym-coach](https://github.com/ANPC86/claude-smart-gym-coach) —
+see `.claude/skills/smart-gym-coach/NOTICE.md` for attribution.
+
 ## Deployment to GitHub Pages
 
 1. Create a repository named `pplppl` on GitHub
